@@ -1,0 +1,1828 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Verde City — Sports Arenas VR</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color: transparent; user-select:none; }
+  html, body { width:100%; height:100%; overflow:hidden; background:#0a1a14; font-family: 'Segoe UI', Arial, sans-serif; }
+  canvas { display:block; touch-action:none; }
+
+  #hud {
+    position:fixed; top:14px; left:14px; z-index:20;
+    color:#eaffea; text-shadow:0 2px 6px rgba(0,0,0,.8);
+    background:rgba(10,30,20,.45); border:1px solid rgba(120,255,170,.35);
+    padding:10px 16px; border-radius:12px; backdrop-filter: blur(4px);
+    min-width:180px;
+  }
+  #hud .zone { font-size:13px; letter-spacing:1px; color:#8ff0b0; text-transform:uppercase; }
+  #hud .score { font-size:26px; font-weight:700; margin-top:2px; }
+  #hud .sub { font-size:11px; color:#bfe; opacity:.8; margin-top:2px; }
+
+  #commentary {
+    position:fixed; left:50%; bottom:18px; transform:translateX(-50%);
+    z-index:21; width:min(640px, 88vw); pointer-events:none;
+    display:flex; flex-direction:column; gap:6px; align-items:center;
+  }
+  #commentary .line {
+    background:rgba(6,18,13,.72); border:1px solid rgba(120,255,170,.3); border-radius:10px;
+    padding:7px 14px; font-size:13px; color:#eaffea; text-shadow:0 1px 4px rgba(0,0,0,.6);
+    opacity:0; transform:translateY(6px); transition:opacity .3s ease, transform .3s ease;
+    max-width:100%;
+  }
+  #commentary .line.show { opacity:1; transform:translateY(0); }
+  #commentary .line b { color:#8ff0b0; margin-right:6px; }
+
+  #crosshair {
+    position:fixed; top:50%; left:50%; width:8px; height:8px; margin:-4px 0 0 -4px;
+    border:2px solid rgba(255,255,255,.85); border-radius:50%; z-index:15; pointer-events:none;
+    box-shadow:0 0 4px rgba(0,0,0,.6);
+  }
+
+  #message {
+    position:fixed; top:22%; left:50%; transform:translate(-50%,0);
+    font-size:34px; font-weight:800; color:#fff; text-shadow:0 3px 10px rgba(0,0,0,.85);
+    z-index:25; pointer-events:none; opacity:0; transition:opacity .25s ease, transform .25s ease;
+    letter-spacing:1px; text-align:center;
+  }
+  #message.show { opacity:1; transform:translate(-50%,10px); }
+
+  #basketballMeter {
+    position:fixed; bottom:140px; left:50%; transform:translateX(-50%);
+    width:280px; height:32px; background:rgba(0,0,0,.4);
+    border:2px solid rgba(100,200,100,.6); border-radius:8px;
+    overflow:hidden; z-index:24; pointer-events:none; opacity:0;
+    transition:opacity .2s ease; display:flex; align-items:center;
+  }
+  #basketballMeter.show { opacity:1; }
+  #basketballMeter .fill {
+    height:100%; background:linear-gradient(90deg, #ff4444, #ffaa44, #44ff44);
+    width:0%; transition:width .03s linear;
+  }
+  #basketballMeter .greenZone {
+    position:absolute; height:100%; background:rgba(68,255,68,.15);
+    border-left:2px solid #4f4; border-right:2px solid #4f4;
+  }
+
+  .iconBtn {
+    position:fixed; z-index:30; width:46px; height:46px; border-radius:50%;
+    background:rgba(10,30,20,.6); border:1px solid rgba(120,255,170,.4);
+    color:#dfffe6; font-size:20px; display:flex; align-items:center; justify-content:center;
+    cursor:pointer;
+  }
+  #menuBtn { top:14px; right:14px; }
+  #settingsBtn { top:70px; right:14px; }
+
+  .panel {
+    position:fixed; z-index:40; top:50%; left:50%; transform:translate(-50%,-50%);
+    background:rgba(8,22,16,.92); border:1px solid rgba(120,255,170,.35);
+    border-radius:16px; padding:22px 26px; color:#eaffea; min-width:270px;
+    box-shadow:0 20px 60px rgba(0,0,0,.5);
+  }
+  .panel.hidden { display:none; }
+  .panel h2 { font-size:16px; letter-spacing:1px; color:#9ff0b8; margin-bottom:14px; text-transform:uppercase; }
+  .panel button.tp {
+    display:block; width:100%; text-align:left; background:rgba(120,255,170,.08);
+    border:1px solid rgba(120,255,170,.3); color:#eaffea; padding:10px 14px; margin-bottom:8px;
+    border-radius:10px; font-size:14px; cursor:pointer;
+  }
+  .panel button.tp:hover { background:rgba(120,255,170,.2); }
+  .panel .row { margin-bottom:14px; }
+  .panel label { display:block; font-size:12px; color:#bfe8cc; margin-bottom:6px; }
+  .panel input[type=range] { width:100%; }
+  .panel .closeX {
+    position:absolute; top:10px; right:14px; cursor:pointer; color:#bfe8cc; font-size:18px;
+  }
+  .panel .toggleRow { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
+
+  #blocker {
+    position:fixed; inset:0; z-index:50; background:rgba(4,12,9,.72);
+    display:flex; align-items:center; justify-content:center; flex-direction:column; color:#eaffea; text-align:center;
+    padding:20px;
+  }
+  #blocker h1 { font-size:26px; margin-bottom:10px; color:#a3ffc4; letter-spacing:1px; }
+  #blocker p { font-size:14px; max-width:460px; line-height:1.6; opacity:.9; margin-bottom:16px; }
+  #blocker .startBtn {
+    padding:14px 28px; font-size:16px; border-radius:30px; background:linear-gradient(135deg,#2ecc71,#16a085);
+    border:none; color:#fff; cursor:pointer; font-weight:700; letter-spacing:.5px;
+  }
+  #blocker.hidden { display:none; }
+
+  #mobileControls { position:fixed; inset:0; z-index:22; pointer-events:none; display:none; }
+  #mobileControls.active { display:block; }
+  .stick {
+    position:absolute; bottom:34px; width:120px; height:120px; border-radius:50%;
+    background:rgba(255,255,255,.08); border:2px solid rgba(255,255,255,.25); pointer-events:auto;
+  }
+  #moveStick { left:26px; }
+  #lookZone { position:absolute; right:0; top:0; bottom:0; width:55%; pointer-events:auto; }
+  .stickKnob {
+    position:absolute; width:54px; height:54px; border-radius:50%; background:rgba(255,255,255,.35);
+    top:33px; left:33px;
+  }
+  #actionBtn {
+    position:absolute; bottom:50px; right:30px; width:86px; height:86px; border-radius:50%;
+    background:rgba(46,204,113,.5); border:2px solid rgba(255,255,255,.5); color:#fff; font-weight:700;
+    font-size:13px; display:flex; align-items:center; justify-content:center; pointer-events:auto; text-align:center;
+  }
+
+  #vrBtnHolder { position:fixed; bottom:16px; left:50%; transform:translateX(-50%); z-index:35; }
+
+  ::-webkit-scrollbar { display:none; }
+</style>
+</head>
+<body>
+
+<div id="blocker">
+  <h1>🌿 VERDE CITY</h1>
+  <p>An eco-futuristic city with four playable sports arenas. Explore on foot, teleport between arenas, and play Soccer, Basketball, Baseball, and Football. Works on desktop (WASD + mouse), mobile (touch joysticks), and Meta Quest 3 (WebXR — tap "Enter VR" once loaded).</p>
+  <p style="font-size:12px;opacity:.7">Desktop: WASD to move, mouse to look, Space/E to interact, ESC to release cursor.<br>Mobile: left stick to move, drag right side to look, tap the green button to act.</p>
+  <button class="startBtn" id="startBtn">Enter Verde City ▶</button>
+</div>
+
+<div id="hud">
+  <div class="zone" id="zoneName">Central Plaza</div>
+  <div class="score" id="scoreText">—</div>
+  <div class="sub" id="subText">Explore the city or teleport to an arena</div>
+</div>
+<div id="crosshair"></div>
+<div id="message"></div>
+<div id="basketballMeter">
+  <div class="fill" id="meterFill"></div>
+  <div class="greenZone" id="greenZone"></div>
+</div>
+<div id="commentary"></div>
+
+<div class="iconBtn" id="menuBtn">🗺️</div>
+<div class="iconBtn" id="settingsBtn">⚙️</div>
+
+<div class="panel hidden" id="teleportMenu">
+  <span class="closeX" data-close="teleportMenu">✕</span>
+  <h2>Teleport</h2>
+  <button class="tp" data-tp="hub">🏙️ Central Plaza (Hub)</button>
+  <button class="tp" data-tp="soccer">⚽ Solaris Soccer Stadium</button>
+  <button class="tp" data-tp="basketball">🏀 Verde Arena (Basketball)</button>
+  <button class="tp" data-tp="baseball">⚾ Riverside Ballpark</button>
+  <button class="tp" data-tp="football">🏈 Canopy Football Stadium</button>
+</div>
+
+<div class="panel hidden" id="settingsPanel">
+  <span class="closeX" data-close="settingsPanel">✕</span>
+  <h2>Settings</h2>
+  <div class="row">
+    <label>Mouse / Look Sensitivity: <span id="sensVal">2.5</span></label>
+    <input type="range" id="sensSlider" min="0.5" max="6" step="0.1" value="2.5">
+  </div>
+  <div class="row">
+    <label>Move Speed: <span id="speedVal">6.0</span></label>
+    <input type="range" id="speedSlider" min="2" max="14" step="0.5" value="6">
+  </div>
+  <div class="toggleRow">
+    <label style="margin:0">Shadows (may reduce FPS)</label>
+    <input type="checkbox" id="shadowToggle">
+  </div>
+  <div class="toggleRow">
+    <label style="margin:0">Invert Look Y</label>
+    <input type="checkbox" id="invertToggle">
+  </div>
+</div>
+
+<div id="mobileControls">
+  <div class="stick" id="moveStick"><div class="stickKnob" id="moveKnob"></div></div>
+  <div id="lookZone"></div>
+  <div id="actionBtn">ACT</div>
+</div>
+
+<div id="vrBtnHolder"></div>
+
+<!-- Classic (non-module) build so this file opens directly by double-click AND on Netlify -->
+<script src="https://unpkg.com/three@0.149.0/build/three.min.js"></script>
+
+<script>
+/* =========================================================================
+   VERDE CITY — single file WebXR / desktop / mobile sports game
+   ========================================================================= */
+
+// Minimal built-in VR button (avoids needing an ES-module addon)
+function createVRButton(renderer){
+  const button = document.createElement('button');
+  button.style.cssText = 'padding:12px 22px;border:1px solid rgba(120,255,170,.6);border-radius:24px;background:rgba(10,30,20,.7);color:#eaffea;font:13px Arial;cursor:pointer;';
+  button.textContent = 'VR NOT DETECTED';
+  button.disabled = true;
+
+  function enableButton(){
+    let currentSession = null;
+    function onSessionEnded(){
+      currentSession.removeEventListener('end', onSessionEnded);
+      button.textContent = 'ENTER VR';
+      currentSession = null;
+    }
+    button.textContent = 'ENTER VR';
+    button.disabled = false;
+    button.onclick = ()=>{
+      if(currentSession === null){
+        navigator.xr.requestSession('immersive-vr', { optionalFeatures:['local-floor','bounded-floor'] }).then((session)=>{
+          session.addEventListener('end', onSessionEnded);
+          renderer.xr.setSession(session);
+          currentSession = session;
+          button.textContent = 'EXIT VR';
+        });
+      } else {
+        currentSession.end();
+      }
+    };
+  }
+
+  if('xr' in navigator){
+    navigator.xr.isSessionSupported('immersive-vr').then((supported)=>{
+      if(supported) enableButton(); else button.style.display = 'none';
+    }).catch(()=> button.style.display = 'none');
+  } else {
+    button.style.display = 'none';
+  }
+  return button;
+}
+
+let scene, camera, renderer, dolly, pitchObj;
+let clock = new THREE.Clock();
+const settings = { sens: 2.5, speed: 6.0, invert: false, shadows: false };
+
+const keys = {};
+let pointerLocked = false;
+let yaw = 0, pitch = 0;
+
+const collidables = []; // {x,z,r}
+const npcs = [];
+const arenas = {}; // name -> data
+let currentZone = 'hub';
+let dribbleTime = 0; // for dribbling animations
+
+/* Game Mechanics State */
+let shootingTimer = null;
+let shootingStartTime = null;
+let shotPower = 0;
+let shotAccuracy = 100;
+const SHOOTING_WINDOW = 1.5; // seconds for green window
+const PERFECT_WINDOW = 0.3; // perfect release window
+let passType = 'normal'; // soccer: normal, through, chip
+let soccerPower = 0; // 0-100 power meter
+
+const messageEl = document.getElementById('message');
+function showMessage(txt, ms=1600){
+  messageEl.textContent = txt;
+  messageEl.classList.add('show');
+  clearTimeout(showMessage._t);
+  showMessage._t = setTimeout(()=> messageEl.classList.remove('show'), ms);
+}
+
+/* ---------------------------- COMMENTARY -------------------------------- */
+
+const commentators = {
+  soccer:     ['Jamie Rivera', 'Coach Lang'],
+  basketball: ['Tasha Brooks', 'Marcus Webb'],
+  baseball:   ['Sam Ortiz', 'Ellie Park'],
+  football:   ['Dante Reyes', 'Priya Nair']
+};
+
+const commentaryFiller = {
+  soccer: [
+    "The pitch looks immaculate under the Solaris lights tonight.",
+    "Great energy from the crowd here at the stadium.",
+    "Possession has been end to end all match.",
+    "You can feel the atmosphere building in this stadium.",
+    "The keeper is talking to the back line, organizing the defense.",
+    "This crowd came ready to make some noise tonight."
+  ],
+  basketball: [
+    "The pace in Verde Arena is relentless tonight.",
+    "Great ball movement on that last possession.",
+    "The crowd is right on top of the action here.",
+    "Both teams trading buckets early on.",
+    "That's a physical, hard-nosed style of play.",
+    "The energy in the building is electric."
+  ],
+  baseball: [
+    "Nice night for baseball down at Riverside Ballpark.",
+    "The pitcher is working quickly, keeping the hitter off balance.",
+    "You love to see aggressive baserunning like that.",
+    "The defense is playing shallow here, expecting a bunt.",
+    "That's a patient approach at the plate.",
+    "The crowd's been buzzing since the first pitch."
+  ],
+  football: [
+    "The Canopy Stadium crowd is on its feet.",
+    "Great coverage on that last route.",
+    "The offensive line is giving him all day to throw.",
+    "This defense has been flying to the ball all game.",
+    "You can hear the crowd noise picking up on third down.",
+    "Special teams could be the difference tonight."
+  ]
+};
+
+const commentaryLog = [];
+const commentaryTimers = { soccer:4, basketball:5, baseball:3, football:6 };
+let commentarySpeakerFlip = { soccer:0, basketball:0, baseball:0, football:0 };
+let lastCommentaryAudioTime = 0;
+
+function addCommentary(zoneKey, text){
+  const names = commentators[zoneKey];
+  const idx = commentarySpeakerFlip[zoneKey] % 2;
+  commentarySpeakerFlip[zoneKey]++;
+  commentaryLog.push({ name: names[idx], text, zone: zoneKey });
+  if(commentaryLog.length > 40) commentaryLog.shift();
+  renderCommentary();
+  
+  // Play audio with throttling to avoid overlapping speech
+  const now = Date.now();
+  if(now - lastCommentaryAudioTime > 2000){
+    lastCommentaryAudioTime = now;
+    playCommentatorAudio(text);
+  }
+}
+
+function renderCommentary(){
+  const el = document.getElementById('commentary');
+  if(!el) return;
+  const recent = commentaryLog.filter(c => c.zone === currentZone).slice(-3);
+  el.innerHTML = recent.map(c => `<div class="line show"><b>${c.name}:</b>${c.text}</div>`).join('');
+}
+
+function playCommentatorAudio(text){
+  if(!window.speechSynthesis) return;
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.rate = 1.0;
+  utterance.pitch = 1.0;
+  utterance.volume = 0.7;
+  window.speechSynthesis.speak(utterance);
+}
+
+function updateCommentaryTimers(dt){
+  if(currentZone === 'hub') return;
+  commentaryTimers[currentZone] -= dt;
+  if(commentaryTimers[currentZone] <= 0){
+    commentaryTimers[currentZone] = 6 + Math.random()*6;
+    const pool = commentaryFiller[currentZone];
+    addCommentary(currentZone, pool[Math.floor(Math.random()*pool.length)]);
+  }
+}
+
+/* ---------------------------- ARENA NPC PLAYERS --------------------------- */
+// Cosmetic AI "players" that run around each field/court so the arenas feel alive
+// and like a real match is happening, independent of the user's own ball/controls.
+
+function spawnArenaPlayers(arenaData, zoneKey, jerseyColorsA, jerseyColorsB, waypointFn, count=6){
+  const players = [];
+  for(let i=0;i<count;i++){
+    const color = i % 2 === 0 ? jerseyColorsA : jerseyColorsB;
+    const p = makePerson(color);
+    const start = waypointFn();
+    p.position.copy(start);
+    arenaData.group.add(p);
+    players.push({ obj:p, target: waypointFn(), speed: 1.4 + Math.random()*1.2, bob:Math.random()*10, actionTimer: 2+Math.random()*3 });
+  }
+  arenaData.players = players;
+  arenaData.zoneKey = zoneKey;
+  arenaData.waypointFn = waypointFn;
+}
+
+function updateArenaPlayers(arenaData, dt){
+  if(!arenaData.players) return;
+  for(const pl of arenaData.players){
+    const dir = pl.target.clone().sub(pl.obj.position);
+    dir.y = 0;
+    const d = dir.length();
+    if(d < 0.8){
+      pl.target = arenaData.waypointFn();
+    } else {
+      dir.normalize();
+      pl.obj.position.addScaledVector(dir, pl.speed*dt);
+      pl.obj.rotation.y = Math.atan2(dir.x, dir.z);
+    }
+    pl.bob += dt*7;
+    pl.obj.position.y = Math.abs(Math.sin(pl.bob))*0.05;
+
+    pl.actionTimer -= dt;
+    if(pl.actionTimer <= 0){
+      pl.actionTimer = 3 + Math.random()*4;
+      // occasional flavor commentary tied to NPC "plays"
+      if(Math.random() < 0.5){
+        const pool = commentaryFiller[arenaData.zoneKey];
+        addCommentary(arenaData.zoneKey, pool[Math.floor(Math.random()*pool.length)]);
+      }
+    }
+  }
+}
+
+/* ---------------------------- INIT ------------------------------------- */
+
+function init(){
+  scene = new THREE.Scene();
+
+  // Sky gradient via canvas texture
+  scene.background = makeSkyTexture();
+  scene.fog = new THREE.FogExp2(0xbfe3dc, 0.0022);
+
+  camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.1, 2000);
+
+  pitchObj = new THREE.Object3D();
+  pitchObj.add(camera);
+  dolly = new THREE.Object3D();
+  dolly.position.set(0, 1.7, 18);
+  dolly.add(pitchObj);
+  scene.add(dolly);
+
+  renderer = new THREE.WebGLRenderer({ antialias:true, powerPreference:'high-performance' });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
+  renderer.shadowMap.enabled = false;
+  renderer.xr.enabled = true;
+  document.body.appendChild(renderer.domElement);
+
+  const vrBtn = createVRButton(renderer);
+  document.getElementById('vrBtnHolder').appendChild(vrBtn);
+
+  // Lighting
+  const hemi = new THREE.HemisphereLight(0xbfe3ff, 0x3a5a3a, 1.1);
+  scene.add(hemi);
+  const sun = new THREE.DirectionalLight(0xfff2d6, 1.4);
+  sun.position.set(120, 180, 80);
+  sun.castShadow = false;
+  sun.shadow.mapSize.set(1024,1024);
+  sun.shadow.camera.left = -200; sun.shadow.camera.right = 200;
+  sun.shadow.camera.top = 200; sun.shadow.camera.bottom = -200;
+  scene.add(sun);
+  window._sunLight = sun;
+
+  buildWorld();
+  buildAllArenas();
+  spawnCityNPCs();
+
+  window.addEventListener('resize', onResize);
+  setupDesktopInput();
+  setupMobileInput();
+  setupUI();
+
+  renderer.setAnimationLoop(animate);
+}
+
+function onResize(){
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+/* ---------------------------- SKY TEXTURE ------------------------------ */
+
+function makeSkyTexture(){
+  const c = document.createElement('canvas');
+  c.width = 2; c.height = 256;
+  const ctx = c.getContext('2d');
+  const g = ctx.createLinearGradient(0,0,0,256);
+  g.addColorStop(0, '#4a90c9');
+  g.addColorStop(0.45, '#9fd2e0');
+  g.addColorStop(0.75, '#d7ecdf');
+  g.addColorStop(1, '#eef7ee');
+  ctx.fillStyle = g;
+  ctx.fillRect(0,0,2,256);
+  const tex = new THREE.CanvasTexture(c);
+  tex.encoding = THREE.sRGBEncoding;
+  return tex;
+}
+
+function makeWindowTexture(base, glow){
+  const c = document.createElement('canvas');
+  c.width = 64; c.height = 128;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = base; ctx.fillRect(0,0,64,128);
+  for(let y=4; y<128; y+=10){
+    for(let x=4; x<64; x+=10){
+      if(Math.random() < 0.55){
+        ctx.fillStyle = glow;
+        ctx.globalAlpha = 0.4 + Math.random()*0.6;
+        ctx.fillRect(x,y,5,6);
+      }
+    }
+  }
+  ctx.globalAlpha = 1;
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+
+/* ---------------------------- WORLD ------------------------------------ */
+
+function buildWorld(){
+  // Ground
+  const groundGeo = new THREE.PlaneGeometry(1000,1000,1,1);
+  const groundMat = new THREE.MeshStandardMaterial({ color:0x3f6b45, roughness:1 });
+  const ground = new THREE.Mesh(groundGeo, groundMat);
+  ground.rotation.x = -Math.PI/2;
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  // Plaza floor (light stone) near hub
+  const plaza = new THREE.Mesh(new THREE.CircleGeometry(40,48), new THREE.MeshStandardMaterial({color:0xd9d3c2, roughness:0.9}));
+  plaza.rotation.x = -Math.PI/2;
+  plaza.position.y = 0.02;
+  plaza.receiveShadow = true;
+  scene.add(plaza);
+
+  // Winding river
+  const riverMat = new THREE.MeshStandardMaterial({ color:0x2f7fae, roughness:0.15, metalness:0.35, transparent:true, opacity:0.92 });
+  const riverShape = new THREE.Shape();
+  riverShape.moveTo(-14, -220);
+  riverShape.bezierCurveTo(-40,-150, 20,-80, -10,0);
+  riverShape.bezierCurveTo(-30,60, 30,120, 8,220);
+  riverShape.lineTo(28,220);
+  riverShape.bezierCurveTo(48,120, -12,60, 12,0);
+  riverShape.bezierCurveTo(42,-80, -18,-150, 8,-220);
+  riverShape.lineTo(-14,-220);
+  const riverGeo = new THREE.ShapeGeometry(riverShape);
+  const river = new THREE.Mesh(riverGeo, riverMat);
+  river.rotation.x = -Math.PI/2;
+  river.position.y = 0.05;
+  scene.add(river);
+
+  // Bridges over the river near hub
+  for(let i=-1;i<=1;i++){
+    const bridge = new THREE.Mesh(new THREE.BoxGeometry(10,0.6,4), new THREE.MeshStandardMaterial({color:0xcccccc}));
+    bridge.position.set(0, 0.4, i*70);
+    bridge.castShadow = true;
+    scene.add(bridge);
+  }
+
+  // Buildings scattered in a ring around plaza, avoiding arena zones
+  const winTexA = makeWindowTexture('#1c2b3a', '#8fe3ff');
+  const winTexB = makeWindowTexture('#20301f', '#9dffb0');
+  const matA = new THREE.MeshStandardMaterial({ map:winTexA, color:0xffffff, roughness:0.6, metalness:0.2 });
+  const matB = new THREE.MeshStandardMaterial({ map:winTexB, color:0xffffff, roughness:0.6, metalness:0.2 });
+
+  const arenaZones = [ [-125,-125], [125,-125], [-125,125], [125,125] ];
+  function nearArena(x,z){
+    for(const [ax,az] of arenaZones){
+      if(Math.hypot(x-ax, z-az) < 55) return true;
+    }
+    return false;
+  }
+
+  let count = 0;
+  for(let ring=1; ring<=6 && count<130; ring++){
+    const radius = 55 + ring*22;
+    const num = 10 + ring*3;
+    for(let i=0;i<num && count<130;i++){
+      const ang = (i/num)*Math.PI*2 + ring*0.3;
+      const x = Math.cos(ang)*radius + (Math.random()-0.5)*10;
+      const z = Math.sin(ang)*radius + (Math.random()-0.5)*10;
+      if(Math.hypot(x,z) < 45) continue;
+      if(nearArena(x,z)) continue;
+      const w = 6 + Math.random()*7;
+      const d = 6 + Math.random()*7;
+      const h = 18 + Math.random()*70;
+      const mat = Math.random() > 0.5 ? matA : matB;
+      const b = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), mat);
+      b.position.set(x, h/2, z);
+      b.castShadow = true; b.receiveShadow = true;
+      scene.add(b);
+      collidables.push({x, z, r: Math.max(w,d)/2 + 1.2});
+
+      // spire on tall ones
+      if(h > 60){
+        const spire = new THREE.Mesh(new THREE.ConeGeometry(w*0.18, 14, 6), new THREE.MeshStandardMaterial({color:0x88aabb}));
+        spire.position.set(x, h+7, z);
+        scene.add(spire);
+      }
+      // greenery balconies
+      const foliageCount = 2 + Math.floor(Math.random()*3);
+      for(let f=0; f<foliageCount; f++){
+        const fy = 4 + Math.random()*(h-8);
+        const fol = new THREE.Mesh(new THREE.BoxGeometry(w*0.9, 1.1, d*0.4), new THREE.MeshStandardMaterial({color:0x3f8f4a, roughness:1}));
+        fol.position.set(x, fy, z + d*0.42);
+        scene.add(fol);
+      }
+      count++;
+    }
+  }
+
+  // Trees (instanced)
+  addTrees(260);
+
+  // Simple monorail loop
+  addMonorail();
+
+  // A few drones/planes for atmosphere
+  addSkyDrones(6);
+}
+
+function addTrees(n){
+  const trunkGeo = new THREE.CylinderGeometry(0.25,0.35,2.4,6);
+  const leafGeo = new THREE.ConeGeometry(1.6,3.2,7);
+  const trunkMat = new THREE.MeshStandardMaterial({ color:0x5b4632 });
+  const leafMat = new THREE.MeshStandardMaterial({ color:0x2e7d46, roughness:1 });
+  const trunkMesh = new THREE.InstancedMesh(trunkGeo, trunkMat, n);
+  const leafMesh = new THREE.InstancedMesh(leafGeo, leafMat, n);
+  trunkMesh.castShadow = leafMesh.castShadow = true;
+  const dummy = new THREE.Object3D();
+  let placed = 0;
+  let attempts = 0;
+  while(placed < n && attempts < n*6){
+    attempts++;
+    const ang = Math.random()*Math.PI*2;
+    const rad = 20 + Math.random()*270;
+    const x = Math.cos(ang)*rad, z = Math.sin(ang)*rad;
+    // avoid river band & arenas roughly
+    if(Math.abs(x) < 20 && Math.abs(z) < 230) continue;
+    const s = 0.7 + Math.random()*0.9;
+    dummy.position.set(x, 1.2*s, z);
+    dummy.scale.set(s,s,s);
+    dummy.updateMatrix();
+    trunkMesh.setMatrixAt(placed, dummy.matrix);
+    dummy.position.set(x, 3.0*s, z);
+    dummy.updateMatrix();
+    leafMesh.setMatrixAt(placed, dummy.matrix);
+    placed++;
+  }
+  trunkMesh.count = placed; leafMesh.count = placed;
+  scene.add(trunkMesh); scene.add(leafMesh);
+}
+
+function addMonorail(){
+  const curve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(-60,14,-60), new THREE.Vector3(60,15,-70), new THREE.Vector3(90,14,0),
+    new THREE.Vector3(60,15,70), new THREE.Vector3(-60,14,60), new THREE.Vector3(-90,15,0),
+    new THREE.Vector3(-60,14,-60)
+  ], true);
+  const trackGeo = new THREE.TubeGeometry(curve, 200, 0.35, 6, true);
+  const trackMat = new THREE.MeshStandardMaterial({ color:0xaaaaaa, metalness:0.6, roughness:0.4 });
+  const track = new THREE.Mesh(trackGeo, trackMat);
+  scene.add(track);
+
+  const trainGeo = new THREE.BoxGeometry(4,2,1.8);
+  const trainMat = new THREE.MeshStandardMaterial({ color:0xffffff, emissive:0x2299ff, emissiveIntensity:0.3, metalness:0.4, roughness:0.3 });
+  const train = new THREE.Mesh(trainGeo, trainMat);
+  scene.add(train);
+  window._train = { mesh:train, curve, t:0 };
+}
+
+function addSkyDrones(n){
+  for(let i=0;i<n;i++){
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(new THREE.BoxGeometry(1.6,0.3,1.6), new THREE.MeshStandardMaterial({color:0xffffff, metalness:0.5}));
+    g.add(body);
+    g.position.set((Math.random()-0.5)*400, 60+Math.random()*80, (Math.random()-0.5)*400);
+    g.userData.speed = 2 + Math.random()*4;
+    g.userData.angle = Math.random()*Math.PI*2;
+    g.userData.radius = 100 + Math.random()*220;
+    g.userData.height = g.position.y;
+    scene.add(g);
+    npcs.push({ type:'drone', obj:g });
+  }
+}
+
+/* ---------------------------- NPC PEOPLE -------------------------------- */
+
+function makePerson(color){
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.28,0.7,4,8), new THREE.MeshStandardMaterial({color}));
+  body.position.y = 0.9;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.22,8,8), new THREE.MeshStandardMaterial({color:0xf1c27d}));
+  head.position.y = 1.5;
+  g.add(body); g.add(head);
+  g.castShadow = true;
+  return g;
+}
+
+const npcColors = [0xdb4437,0x4285f4,0xf4b400,0x0f9d58,0xab47bc,0xff7043,0x26a69a,0xeeeeee];
+
+function spawnCityNPCs(n=40){
+  for(let i=0;i<n;i++){
+    const p = makePerson(npcColors[Math.floor(Math.random()*npcColors.length)]);
+    const ang = Math.random()*Math.PI*2;
+    const rad = 20 + Math.random()*230;
+    let x = Math.cos(ang)*rad, z = Math.sin(ang)*rad;
+    p.position.set(x, 0, z);
+    scene.add(p);
+    npcs.push({
+      type:'walker', obj:p, speed: 0.6 + Math.random()*0.7,
+      target: new THREE.Vector3(x,0,z), bob:Math.random()*10
+    });
+    pickNewTarget(npcs[npcs.length-1], 250);
+  }
+}
+
+function pickNewTarget(npc, range){
+  const ang = Math.random()*Math.PI*2;
+  const rad = Math.random()*range;
+  npc.target.set(Math.cos(ang)*rad, 0, Math.sin(ang)*rad);
+}
+
+function spawnArenaFans(group, spots, countLimit){
+  // instanced fan bodies + heads seated in the stands
+  const n = Math.min(spots.length, countLimit);
+  const bodyGeo = new THREE.BoxGeometry(0.5,0.7,0.4);
+  const headGeo = new THREE.SphereGeometry(0.18,6,6);
+  const bodyMat = new THREE.MeshStandardMaterial({ vertexColors:true });
+  const headMat = new THREE.MeshStandardMaterial({ color:0xf1c27d });
+  const bodies = new THREE.InstancedMesh(bodyGeo, bodyMat, n);
+  const heads = new THREE.InstancedMesh(headGeo, headMat, n);
+  const dummy = new THREE.Object3D();
+  const tmpColor = new THREE.Color();
+  for(let i=0;i<n;i++){
+    const s = spots[i];
+    dummy.position.set(s.x, s.y+0.4, s.z);
+    dummy.lookAt(0, s.y+0.4, 0);
+    dummy.updateMatrix();
+    bodies.setMatrixAt(i, dummy.matrix);
+    dummy.position.set(s.x, s.y+0.85, s.z);
+    dummy.updateMatrix();
+    heads.setMatrixAt(i, dummy.matrix);
+    tmpColor.setHSL(Math.random(), 0.6, 0.5);
+    bodies.setColorAt(i, tmpColor);
+  }
+  bodies.instanceMatrix.needsUpdate = true;
+  heads.instanceMatrix.needsUpdate = true;
+  if(bodies.instanceColor) bodies.instanceColor.needsUpdate = true;
+  group.add(bodies); group.add(heads);
+}
+
+/* ---------------------------- ARENAS ------------------------------------ */
+
+function buildStandsRing(innerR, rows, rowHeight, rowDepth, color){
+  const group = new THREE.Group();
+  const spots = [];
+  for(let r=0; r<rows; r++){
+    const rad = innerR + r*rowDepth;
+    const y = 1 + r*rowHeight;
+    const seg = 48;
+    const geo = new THREE.RingGeometry(rad, rad+rowDepth, seg, 1, 0, Math.PI*2);
+    // build as a stepped ring using a flat box torus approximation instead for solidity:
+    const ringMesh = new THREE.Mesh(
+      new THREE.CylinderGeometry(rad+rowDepth, rad+rowDepth, rowHeight*0.9, seg, 1, true),
+      new THREE.MeshStandardMaterial({ color, side:THREE.DoubleSide, roughness:0.9 })
+    );
+    ringMesh.position.y = y;
+    group.add(ringMesh);
+
+    for(let s=0;s<seg;s++){
+      const ang = (s/seg)*Math.PI*2;
+      spots.push({ x: Math.cos(ang)*(rad+rowDepth*0.5), y, z: Math.sin(ang)*(rad+rowDepth*0.5) });
+    }
+  }
+  return { group, spots };
+}
+
+function buildAllArenas(){
+  arenas.soccer = buildSoccerArena(new THREE.Vector3(-125,0,-125));
+  arenas.basketball = buildBasketballArena(new THREE.Vector3(125,0,-125));
+  arenas.baseball = buildBaseballArena(new THREE.Vector3(-125,0,125));
+  arenas.football = buildFootballArena(new THREE.Vector3(125,0,125));
+}
+
+function arenaLabel(text, pos, color){
+  const canvas = document.createElement('canvas');
+  canvas.width = 512; canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = 'rgba(10,30,20,0.85)';
+  ctx.fillRect(0,0,512,128);
+  ctx.strokeStyle = color; ctx.lineWidth = 6;
+  ctx.strokeRect(4,4,504,120);
+  ctx.fillStyle = '#eaffea';
+  ctx.font = 'bold 54px Arial';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(text, 256, 64);
+  const tex = new THREE.CanvasTexture(canvas);
+  const mat = new THREE.MeshBasicMaterial({ map:tex, transparent:true });
+  const geo = new THREE.PlaneGeometry(16,4);
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.copy(pos);
+  return mesh;
+}
+
+/* ---- SOCCER ---- */
+function buildSoccerArena(center){
+  const group = new THREE.Group();
+  group.position.copy(center);
+  scene.add(group);
+
+  // A striped, textured grass pitch reads much more like a full-size soccer field.
+  const field = new THREE.Mesh(new THREE.PlaneGeometry(46,30), new THREE.MeshStandardMaterial({map:makeGrassTexture(), roughness:0.95}));
+  field.rotation.x = -Math.PI/2; field.position.y = 0.05;
+  group.add(field);
+  // Standard field markings: touchlines, halfway line, center circle and penalty areas.
+  addLineBox(group, 46,30, 0.06, 0xffffff);
+  addLineCircle(group, 5, 0.08, 0xffffff);
+  addCourtMark(group, 0, 0.075, 0, 0.10, 30, 0xffffff);
+  addLineBoxAt(group, -17.25, 0.075, 0, 11.5, 18, 0xffffff);
+  addLineBoxAt(group, 17.25, 0.075, 0, 11.5, 18, 0xffffff);
+  addLineBoxAt(group, -20.5, 0.08, 0, 5, 8, 0xffffff);
+  addLineBoxAt(group, 20.5, 0.08, 0, 5, 8, 0xffffff);
+
+  const { group: stands, spots } = buildStandsRing(28, 5, 3.2, 3.5, 0x445566);
+  group.add(stands);
+  spawnArenaFans(stands, spots, 220);
+
+  // Goals at both ends (x = -23 / +23)
+  const goalW = 7.32, goalH = 2.44;
+  const goalMat = new THREE.MeshStandardMaterial({ color:0xffffff, metalness:0.3 });
+  function makeGoal(xSign){
+    const g = new THREE.Group();
+    const post = (px,py,pz,sx,sy,sz)=>{
+      const m = new THREE.Mesh(new THREE.BoxGeometry(sx,sy,sz), goalMat);
+      m.position.set(px,py,pz); g.add(m);
+    };
+    post(0, goalH/2, -goalW/2, 0.15, goalH, 0.15);
+    post(0, goalH/2, goalW/2, 0.15, goalH, 0.15);
+    post(0, goalH, 0, 0.15, 0.15, goalW);
+    g.position.set(xSign*22.5, 0, 0);
+    return g;
+  }
+  const goalA = makeGoal(-1); const goalB = makeGoal(1);
+  group.add(goalA); group.add(goalB);
+
+  group.add(arenaLabel('SOLARIS SOCCER STADIUM', new THREE.Vector3(0,16,-27), '#22cc66'));
+
+  const ball = makeSoccerBall();
+  ball.position.set(0,0.28,0);
+  group.add(ball);
+
+  const data = {
+    type:'soccer', group, center, spawn: new THREE.Vector3(0,1.7,10).add(center),
+    ball, vel:new THREE.Vector3(), score:0,
+    goalX: 22.5, goalW, goalH,
+    radius: 30
+  };
+  spawnArenaPlayers(data, 'soccer', 0xdb4437, 0x4285f4, ()=> new THREE.Vector3((Math.random()-0.5)*38, 0, (Math.random()-0.5)*24), 8);
+  return data;
+}
+
+/* ---- BASKETBALL ---- */
+let basketballModelPromise = null;
+
+function loadBasketballModel(){
+  if(basketballModelPromise) return basketballModelPromise;
+  
+  basketballModelPromise = new Promise((resolve)=>{
+    const textureLoader = new THREE.TextureLoader();
+    const baseUrl = 'basketball/textures/';
+    
+    // Load textures
+    let colorMap = null, normalMap = null;
+    let loadedCount = 0;
+    const onLoad = ()=>{
+      loadedCount++;
+      if(loadedCount === 2){
+        // Create basketball geometry with textures
+        const geometry = new THREE.SphereGeometry(0.24, 32, 32);
+        const material = new THREE.MeshStandardMaterial({
+          map: colorMap,
+          normalMap: normalMap,
+          roughness: 0.7,
+          metalness: 0.1
+        });
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.castShadow = true;
+        resolve(mesh);
+      }
+    };
+    
+    textureLoader.load(baseUrl + 'Basketball_size6.jpeg', (tex)=>{
+      colorMap = tex;
+      colorMap.encoding = THREE.sRGBEncoding;
+      onLoad();
+    }, undefined, ()=>{
+      // Fallback if texture fails
+      resolve(new THREE.Mesh(new THREE.SphereGeometry(0.24,16,16), new THREE.MeshStandardMaterial({color:0xd35400})));
+    });
+    
+    textureLoader.load(baseUrl + 'Basketball_size6_normal.jpeg', (tex)=>{
+      normalMap = tex;
+      onLoad();
+    }, undefined, ()=>{ onLoad(); }); // Normal map is optional
+  });
+  
+  return basketballModelPromise;
+}
+
+function buildBasketballArena(center){
+  const group = new THREE.Group();
+  group.position.copy(center);
+  scene.add(group);
+
+  // Sports City home court: blue hardwood-style surface with red keys.
+  const court = new THREE.Mesh(new THREE.PlaneGeometry(70,40), new THREE.MeshStandardMaterial({color:0x0b4fa3, roughness:0.78, metalness:0.05}));
+  court.rotation.x = -Math.PI/2; court.position.y = 0.05;
+  group.add(court);
+  const lineColor = 0xffffff;
+  const red = 0xcf2438;
+  const blue = 0x0b4fa3;
+  // Red paint/key areas at both baskets, outlined in crisp white.
+  addCourtMark(group, -29, 0.065, 0, 12, 16, red);
+  addCourtMark(group, 29, 0.065, 0, 12, 16, red);
+  addLineBox(group, 70, 40, 0.085, lineColor); // includes both baselines
+  addLineBoxAt(group, -29, 0.09, 0, 12, 16, lineColor);
+  addLineBoxAt(group, 29, 0.09, 0, 12, 16, lineColor);
+  addLineCircle(group, 6.0, 0.09, lineColor);
+  addCourtMark(group, 0, 0.067, 0, 11.5, 11.5, blue);
+  group.add(makeCenterLogo());
+  addBasketballThreePointLine(group, -1, lineColor);
+  addBasketballThreePointLine(group, 1, lineColor);
+
+  const { group: stands, spots } = buildStandsRing(40, 6, 4, 3, 0x333355);
+  group.add(stands);
+  spawnArenaFans(stands, spots, 280);
+
+  function makeHoop(xSign){
+    const g = new THREE.Group();
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.2,0.2,3.5,8), new THREE.MeshStandardMaterial({color:0x888888}));
+    pole.position.set(0,1.75,0);
+    const backboard = new THREE.Mesh(new THREE.BoxGeometry(0.1,1.2,2.0), new THREE.MeshStandardMaterial({color:0xffffff, transparent:true, opacity:0.75}));
+    backboard.position.set(-xSign*0.5, 3.3, 0);
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(0.5,0.045,8,16), new THREE.MeshStandardMaterial({color:0xff6600}));
+    rim.rotation.x = Math.PI/2;
+    rim.position.set(-xSign*0.95, 3.3-0.5, 0);
+    g.add(pole); g.add(backboard); g.add(rim);
+    g.position.set(xSign*33, 0, 0);
+    g.userData.rimWorldOffset = -xSign*0.95;
+    return g;
+  }
+  const hoopA = makeHoop(-1); const hoopB = makeHoop(1);
+  group.add(hoopA); group.add(hoopB);
+
+  group.add(arenaLabel('VERDE ARENA — BASKETBALL', new THREE.Vector3(0,16,-18), '#33ddaa'));
+
+  let ball = new THREE.Mesh(new THREE.SphereGeometry(0.24,16,16), new THREE.MeshStandardMaterial({color:0xd35400}));
+  ball.position.set(0,1.2,0);
+  group.add(ball);
+  
+  const data = {
+    type:'basketball', group, center, spawn:new THREE.Vector3(0,1.7,12).add(center),
+    ball, vel:new THREE.Vector3(), score:0, held:true,
+    hoops:[{x:-33+0.95,y:3.3-0.5,z:0},{x:33-0.95,y:3.3-0.5,z:0}],
+    radius: 40
+  };
+  
+  loadBasketballModel().then((basketballModel)=>{
+    group.remove(ball);
+    ball = basketballModel.clone();
+    ball.position.set(0,1.2,0);
+    group.add(ball);
+    data.ball = ball;
+  });
+  
+  spawnArenaPlayers(data, 'basketball', 0xf4b400, 0x0f9d58, ()=> new THREE.Vector3((Math.random()-0.5)*50, 0, (Math.random()-0.5)*30), 8);
+  return data;
+}
+
+/* ---- BASEBALL ---- */
+function buildBaseballArena(center){
+  const group = new THREE.Group();
+  group.position.copy(center);
+  scene.add(group);
+
+  const infield = new THREE.Mesh(new THREE.CircleGeometry(20,32), new THREE.MeshStandardMaterial({color:0x8a5a34}));
+  infield.rotation.x = -Math.PI/2; infield.position.y = 0.04;
+  group.add(infield);
+  const outfield = new THREE.Mesh(new THREE.RingGeometry(20,34,32), new THREE.MeshStandardMaterial({color:0x2e8b3f, side:THREE.DoubleSide}));
+  outfield.rotation.x = -Math.PI/2; outfield.position.y = 0.03;
+  group.add(outfield);
+
+  const { group: stands, spots } = buildStandsRing(34, 5, 3.2, 3.4, 0x553344);
+  group.add(stands);
+  spawnArenaFans(stands, spots, 220);
+
+  // home plate + pitching mound
+  const plate = new THREE.Mesh(new THREE.BoxGeometry(0.6,0.05,0.6), new THREE.MeshStandardMaterial({color:0xffffff}));
+  plate.position.set(0, 0.05, 12);
+  group.add(plate);
+  const mound = new THREE.Mesh(new THREE.CylinderGeometry(1.4,1.6,0.3,16), new THREE.MeshStandardMaterial({color:0x9a6a3f}));
+  mound.position.set(0,0.15,0);
+  group.add(mound);
+
+  group.add(arenaLabel('RIVERSIDE BALLPARK', new THREE.Vector3(0,15,-30), '#ffaa22'));
+
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(0.1,10,10), new THREE.MeshStandardMaterial({color:0xffffff}));
+  ball.position.set(0,1,0);
+  group.add(ball);
+
+  const bat = new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.09,1.1,8), new THREE.MeshStandardMaterial({color:0xdeb887}));
+  bat.rotation.z = Math.PI/2.6;
+  bat.position.set(0.5,1.1,12);
+  group.add(bat);
+
+  const data = {
+    type:'baseball', group, center, spawn:new THREE.Vector3(0,1.7,17).add(center),
+    ball, bat, vel:new THREE.Vector3(), score:0, strikes:0, hits:0,
+    state:'idle', pitchTimer:2,
+    radius: 34
+  };
+  const basePositions = [
+    new THREE.Vector3(8,0,-8), new THREE.Vector3(-8,0,-8), new THREE.Vector3(0,0,-16),
+    new THREE.Vector3(14,0,4), new THREE.Vector3(-14,0,4), new THREE.Vector3(0,0,-2)
+  ];
+  let baseIdx = 0;
+  spawnArenaPlayers(data, 'baseball', 0x0f9d58, 0xab47bc, ()=>{
+    const p = basePositions[baseIdx % basePositions.length].clone();
+    baseIdx++;
+    p.x += (Math.random()-0.5)*3; p.z += (Math.random()-0.5)*3;
+    return p;
+  }, 6);
+  return data;
+}
+
+/* ---- FOOTBALL ---- */
+function buildFootballArena(center){
+  const group = new THREE.Group();
+  group.position.copy(center);
+  scene.add(group);
+
+  const field = new THREE.Mesh(new THREE.PlaneGeometry(50,25), new THREE.MeshStandardMaterial({color:0x2e7d46}));
+  field.rotation.x = -Math.PI/2; field.position.y = 0.05;
+  group.add(field);
+  for(let x=-22; x<=22; x+=4.4){
+    const stripe = new THREE.Mesh(new THREE.PlaneGeometry(0.15,25), new THREE.MeshStandardMaterial({color:0xffffff}));
+    stripe.rotation.x = -Math.PI/2; stripe.position.set(x,0.06,0);
+    group.add(stripe);
+  }
+
+  const { group: stands, spots } = buildStandsRing(30, 5, 3.2, 3.4, 0x33445a);
+  group.add(stands);
+  spawnArenaFans(stands, spots, 220);
+
+  function makeGoalposts(xSign){
+    const g = new THREE.Group();
+    const upright = new THREE.Mesh(new THREE.CylinderGeometry(0.1,0.1,4,8), new THREE.MeshStandardMaterial({color:0xffdd00}));
+    upright.position.set(0,2,-2.2);
+    const upright2 = upright.clone(); upright2.position.z = 2.2;
+    const crossbar = new THREE.Mesh(new THREE.CylinderGeometry(0.08,0.08,4.4,8), new THREE.MeshStandardMaterial({color:0xffdd00}));
+    crossbar.rotation.z = Math.PI/2; crossbar.position.set(0,3.2,0);
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.14,0.14,3.2,8), new THREE.MeshStandardMaterial({color:0xffdd00}));
+    pole.position.set(0,1.6,0);
+    g.add(upright); g.add(upright2); g.add(crossbar); g.add(pole);
+    g.position.set(xSign*24, 0, 0);
+    return g;
+  }
+  group.add(makeGoalposts(-1));
+  group.add(makeGoalposts(1));
+
+  group.add(arenaLabel('CANOPY FOOTBALL STADIUM', new THREE.Vector3(0,15,-22), '#4488ff'));
+
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(0.2,10,6), new THREE.MeshStandardMaterial({color:0x7a3b12}));
+  ball.scale.set(1,0.7,0.7);
+  ball.position.set(0,1,10);
+  group.add(ball);
+
+  const receiver = makePerson(0xffcc00);
+  receiver.position.set(6,0,4);
+  group.add(receiver);
+
+  const data = {
+    type:'football', group, center, spawn:new THREE.Vector3(0,1.7,15).add(center),
+    ball, receiver, vel:new THREE.Vector3(), score:0, attempts:0,
+    receiverDir: 1, thrown:false,
+    radius: 30
+  };
+  spawnArenaPlayers(data, 'football', 0x4285f4, 0xdb4437, ()=> new THREE.Vector3((Math.random()-0.5)*40, 0, (Math.random()-0.5)*20), 8);
+  return data;
+}
+
+function addLineBox(group, w, d, y, color){
+  const pts = [
+    new THREE.Vector3(-w/2,y,-d/2), new THREE.Vector3(w/2,y,-d/2),
+    new THREE.Vector3(w/2,y,d/2), new THREE.Vector3(-w/2,y,d/2), new THREE.Vector3(-w/2,y,-d/2)
+  ];
+  const geo = new THREE.BufferGeometry().setFromPoints(pts);
+  const line = new THREE.Line(geo, new THREE.LineBasicMaterial({color}));
+  group.add(line);
+}
+function addLineCircle(group, r, y, color){
+  const pts = [];
+  for(let i=0;i<=48;i++){ const a=(i/48)*Math.PI*2; pts.push(new THREE.Vector3(Math.cos(a)*r,y,Math.sin(a)*r)); }
+  const geo = new THREE.BufferGeometry().setFromPoints(pts);
+  const line = new THREE.Line(geo, new THREE.LineBasicMaterial({color}));
+  group.add(line);
+}
+
+/* ---------------------------- INPUT: DESKTOP ---------------------------- */
+
+function setupDesktopInput(){
+  const blocker = document.getElementById('blocker');
+  const startBtn = document.getElementById('startBtn');
+
+  startBtn.addEventListener('click', ()=>{
+    blocker.classList.add('hidden');
+    if(!isMobile()) renderer.domElement.requestPointerLock?.();
+    clock.start();
+  });
+
+  document.addEventListener('pointerlockchange', ()=>{
+    pointerLocked = document.pointerLockElement === renderer.domElement;
+  });
+
+  renderer.domElement.addEventListener('click', ()=>{
+    if(!isMobile() && !pointerLocked && document.getElementById('blocker').classList.contains('hidden')){
+      renderer.domElement.requestPointerLock?.();
+    }
+  });
+
+  document.addEventListener('mousemove', (e)=>{
+    if(!pointerLocked) return;
+    const s = settings.sens * 0.0011;
+    yaw -= e.movementX * s;
+    pitch += (settings.invert? 1 : -1) * e.movementY * s;
+    pitch = Math.max(-1.2, Math.min(1.2, pitch));
+  });
+
+  window.addEventListener('keydown', (e)=>{
+    keys[e.code] = true;
+    
+    // Sport-specific controls
+    if(currentZone === 'soccer'){
+      if(e.code === 'Digit1') { passType = 'normal'; showMessage('Pass Type: Normal'); }
+      if(e.code === 'Digit2') { passType = 'through'; showMessage('Pass Type: Through Ball'); }
+      if(e.code === 'Digit3') { passType = 'chip'; showMessage('Pass Type: Chip Shot'); }
+      if((e.code === 'Space' || e.code === 'KeyE') && soccerPower > 0 && soccerPower < 100){
+        // Continue charging power meter while holding
+        soccerPower = Math.min(100, soccerPower + 3);
+        showMessage(`Power: ${Math.floor(soccerPower)}%`);
+      } else if((e.code === 'Space' || e.code === 'KeyE') && soccerPower === 0){
+        // First press: start charging
+        doInteract();
+      }
+    } else if(e.code === 'Space' || e.code === 'KeyE'){ 
+      // Non-soccer sports interact immediately
+      doInteract();
+    }
+  });
+  window.addEventListener('keyup', (e)=>{
+    keys[e.code] = false;
+    if((e.code === 'Space' || e.code === 'KeyE') && currentZone === 'soccer' && soccerPower > 0){
+      doInteract(); // Release soccer shot
+    }
+  });
+}
+
+function isMobile(){
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && !renderer.xr.isPresenting);
+}
+
+/* ---------------------------- INPUT: MOBILE ------------------------------ */
+
+let moveVec = {x:0,y:0};
+let lookTouchId = null, lastTouch = {x:0,y:0};
+
+function setupMobileInput(){
+  if(!isMobile()) return;
+  document.getElementById('mobileControls').classList.add('active');
+
+  const moveStick = document.getElementById('moveStick');
+  const moveKnob = document.getElementById('moveKnob');
+  let moveTouchId = null, moveOrigin = {x:0,y:0};
+
+  moveStick.addEventListener('touchstart', (e)=>{
+    const t = e.changedTouches[0];
+    moveTouchId = t.identifier;
+    const r = moveStick.getBoundingClientRect();
+    moveOrigin = { x:r.left+r.width/2, y:r.top+r.height/2 };
+  });
+  moveStick.addEventListener('touchmove', (e)=>{
+    for(const t of e.changedTouches){
+      if(t.identifier !== moveTouchId) continue;
+      let dx = t.clientX - moveOrigin.x, dy = t.clientY - moveOrigin.y;
+      const max = 45;
+      const len = Math.hypot(dx,dy);
+      if(len>max){ dx = dx/len*max; dy = dy/len*max; }
+      moveKnob.style.transform = `translate(${dx}px,${dy}px)`;
+      moveVec.x = dx/max; moveVec.y = dy/max;
+    }
+    e.preventDefault();
+  }, {passive:false});
+  moveStick.addEventListener('touchend', (e)=>{
+    for(const t of e.changedTouches){
+      if(t.identifier !== moveTouchId) continue;
+      moveVec.x = 0; moveVec.y = 0;
+      moveKnob.style.transform = `translate(0,0)`;
+      moveTouchId = null;
+    }
+  });
+
+  const lookZone = document.getElementById('lookZone');
+  lookZone.addEventListener('touchstart', (e)=>{
+    const t = e.changedTouches[0];
+    lookTouchId = t.identifier;
+    lastTouch = { x:t.clientX, y:t.clientY };
+  });
+  lookZone.addEventListener('touchmove', (e)=>{
+    for(const t of e.changedTouches){
+      if(t.identifier !== lookTouchId) continue;
+      const dx = t.clientX - lastTouch.x, dy = t.clientY - lastTouch.y;
+      const s = settings.sens * 0.0022;
+      yaw -= dx*s;
+      pitch += (settings.invert? 1:-1) * dy*s;
+      pitch = Math.max(-1.2, Math.min(1.2, pitch));
+      lastTouch = { x:t.clientX, y:t.clientY };
+    }
+    e.preventDefault();
+  }, {passive:false});
+  lookZone.addEventListener('touchend', (e)=>{
+    for(const t of e.changedTouches){ if(t.identifier===lookTouchId) lookTouchId = null; }
+  });
+
+  document.getElementById('actionBtn').addEventListener('touchstart', (e)=>{
+    doInteract(); e.preventDefault();
+  }, {passive:false});
+}
+
+/* ---------------------------- UI ---------------------------------------- */
+
+function setupUI(){
+  const menuBtn = document.getElementById('menuBtn');
+  const settingsBtn = document.getElementById('settingsBtn');
+  const teleportMenu = document.getElementById('teleportMenu');
+  const settingsPanel = document.getElementById('settingsPanel');
+
+  menuBtn.onclick = ()=> teleportMenu.classList.toggle('hidden');
+  settingsBtn.onclick = ()=> settingsPanel.classList.toggle('hidden');
+  document.querySelectorAll('[data-close]').forEach(el=>{
+    el.onclick = ()=> document.getElementById(el.dataset.close).classList.add('hidden');
+  });
+
+  document.querySelectorAll('[data-tp]').forEach(btn=>{
+    btn.onclick = ()=>{
+      teleportTo(btn.dataset.tp);
+      teleportMenu.classList.add('hidden');
+    };
+  });
+
+  const sensSlider = document.getElementById('sensSlider');
+  const speedSlider = document.getElementById('speedSlider');
+  sensSlider.oninput = ()=>{ settings.sens = parseFloat(sensSlider.value); document.getElementById('sensVal').textContent = settings.sens.toFixed(1); };
+  speedSlider.oninput = ()=>{ settings.speed = parseFloat(speedSlider.value); document.getElementById('speedVal').textContent = settings.speed.toFixed(1); };
+  document.getElementById('shadowToggle').onchange = (e)=>{
+    settings.shadows = e.target.checked;
+    renderer.shadowMap.enabled = settings.shadows;
+    window._sunLight.castShadow = settings.shadows;
+  };
+  document.getElementById('invertToggle').onchange = (e)=> settings.invert = e.target.checked;
+}
+
+function teleportTo(name){
+  let pos;
+  if(name === 'hub') pos = new THREE.Vector3(0,1.7,18);
+  else pos = arenas[name].spawn.clone();
+  dolly.position.copy(pos);
+  yaw = 0; pitch = 0;
+  showMessage(name==='hub' ? 'Central Plaza' : arenaDisplayName(name), 1400);
+  if(name !== 'hub'){
+    commentaryTimers[name] = 1.5;
+    const names = commentators[name];
+    addCommentary(name, `Welcome back to the action, I'm here with ${names[(commentarySpeakerFlip[name]+1)%2]}.`);
+  }
+}
+
+function arenaDisplayName(k){
+  return { soccer:'⚽ Soccer Stadium', basketball:'🏀 Basketball Arena', baseball:'⚾ Ballpark', football:'🏈 Football Stadium' }[k] || k;
+}
+
+/* ---------------------------- GAME LOGIC --------------------------------- */
+
+function getForwardVector(){
+  const dir = new THREE.Vector3();
+  camera.getWorldDirection(dir);
+  dir.y = 0; dir.normalize();
+  return dir;
+}
+function getRightVector(){
+  const f = getForwardVector();
+  return new THREE.Vector3(f.z, 0, -f.x);
+}
+
+function currentArenaKey(){
+  for(const key of Object.keys(arenas)){
+    const a = arenas[key];
+    const d = dolly.position.distanceTo(a.center);
+    if(d < a.radius) return key;
+  }
+  return 'hub';
+}
+
+function doInteract(){
+  const zone = currentZone;
+  if(zone === 'soccer') kickSoccer();
+  else if(zone === 'basketball') shootBasketball();
+  else if(zone === 'baseball') swingBat();
+  else if(zone === 'football') throwFootball();
+}
+
+function kickSoccer(){
+  const a = arenas.soccer;
+  const localPlayer = dolly.position.clone().sub(a.center);
+  const ballLocal = a.ball.position;
+  if(localPlayer.distanceTo(ballLocal) > 2.2) { showMessage('Get closer to the ball'); return; }
+  
+  // FC26 mechanics: Power meter charge
+  if(soccerPower === 0){
+    soccerPower = 1;
+    showMessage('HOLD SPACE/ACT to charge power (Power/Accuracy trade-off)');
+    return;
+  }
+  
+  const dir = getForwardVector();
+  const basePower = soccerPower * 1.2; // 0-120 power (strong kicks)
+  
+  // Accuracy decreases with power (risk/reward)
+  const accuracyPenalty = (100 - soccerPower) * 0.005;
+  const spread = accuracyPenalty * (Math.random()-0.5);
+  
+  const dirSpread = Math.atan2(dir.z, dir.x) + spread * 0.02;
+  const newDir = new THREE.Vector3(Math.cos(dirSpread), 0, Math.sin(dirSpread));
+  
+  // Different shot types
+  let heightMod = 2.8;
+  if(passType === 'through') heightMod = 1.5;
+  else if(passType === 'chip') heightMod = 4.2;
+  
+  a.vel.set(newDir.x * basePower, heightMod * (soccerPower/100), newDir.z * basePower);
+  
+  showMessage(`Shot! Power: ${Math.floor(soccerPower)}% Accuracy: ${Math.floor(100-accuracyPenalty)}%`);
+  soccerPower = 0;
+  passType = 'normal';
+}
+
+function shootBasketball(){
+  const a = arenas.basketball;
+  const localPlayer = dolly.position.clone().sub(a.center);
+  if(!a.held) return;
+  if(localPlayer.distanceTo(a.ball.position) > 8){ showMessage('Move closer to the hoop'); return; }
+  
+  // 2K mechanics: Timing-based shot with green window
+  if(!shootingTimer){
+    shootingStartTime = Date.now();
+    const meterEl = document.getElementById('basketballMeter');
+    const meterFill = document.getElementById('meterFill');
+    const greenZone = document.getElementById('greenZone');
+    meterEl.classList.add('show');
+    
+    // Calculate green zone position (30% of cycle)
+    const greenStart = (1 - PERFECT_WINDOW) / 2;
+    const greenEnd = (1 + PERFECT_WINDOW) / 2;
+    greenZone.style.left = (greenStart * 100) + '%';
+    greenZone.style.width = (PERFECT_WINDOW * 100) + '%';
+    
+    shootingTimer = setInterval(()=>{
+      const elapsed = (Date.now() - shootingStartTime) / 1000;
+      const cyclePos = (elapsed % SHOOTING_WINDOW) / SHOOTING_WINDOW;
+      shotPower = 50 + 50 * Math.sin(cyclePos * Math.PI);
+      
+      // Update meter fill
+      meterFill.style.width = (cyclePos * 100) + '%';
+      
+      // Green window feedback
+      const isPerfect = cyclePos > greenStart && cyclePos < greenEnd;
+      if(isPerfect) meterFill.style.background = 'linear-gradient(90deg, #44ff44, #44ff44)';
+      else meterFill.style.background = 'linear-gradient(90deg, #ff4444, #ffaa44, #44ff44)';
+    }, 30);
+    showMessage('PRESS SPACE AGAIN to shoot! Hit the 🟢 GREEN ZONE!');
+    return;
+  }
+  
+  // Release the shot
+  clearInterval(shootingTimer);
+  shootingTimer = null;
+  document.getElementById('basketballMeter').classList.remove('show');
+  
+  const elapsed = (Date.now() - shootingStartTime) / 1000;
+  const cyclePos = (elapsed % SHOOTING_WINDOW) / SHOOTING_WINDOW;
+  
+  // Perfect release bonus
+  const greenStart = (1 - PERFECT_WINDOW) / 2;
+  const greenEnd = (1 + PERFECT_WINDOW) / 2;
+  const isPerfect = cyclePos > greenStart && cyclePos < greenEnd;
+  shotAccuracy = isPerfect ? 100 : Math.floor(shotPower);
+  
+  const dir = getForwardVector();
+  const dist = localPlayer.length();
+  const basePower = 6 + Math.min(dist,14)*0.55;
+  const accuracyMod = shotAccuracy / 100;
+  
+  a.vel.set(dir.x*basePower*0.6*accuracyMod, 7.5*accuracyMod, dir.z*basePower*0.6*accuracyMod);
+  a.held = false;
+  a.scoredThisShot = false;
+  
+  showMessage(isPerfect ? '🟢 PERFECT RELEASE!' : `Shot Release: ${Math.floor(shotAccuracy)}% Accuracy`);
+  shotPower = 0;
+  shotAccuracy = 100;
+}
+
+function swingBat(){
+  const a = arenas.baseball;
+  if(a.state === 'pitched'){
+    // MLB The Show 26 mechanics: Timing-based hitting
+    const dz = Math.abs(a.ball.position.z - 12);
+    const dy = a.ball.position.y;
+    
+    if(dz < 2.0 && dy > 0.3 && dy < 2.5){
+      // Get timing window
+      const perfectTiming = 0.3;
+      const earlyWindow = perfectTiming * 0.5;
+      const lateWindow = perfectTiming * 0.5;
+      const swingDz = dz / 11;
+      
+      let timing = 'late';
+      let powerMod = 0.6;
+      let contactQuality = 60;
+      
+      if(swingDz < earlyWindow){
+        timing = 'early';
+        powerMod = 0.7;
+        contactQuality = 75;
+      } else if(swingDz < earlyWindow + perfectTiming){
+        timing = 'perfect';
+        powerMod = 1.2;
+        contactQuality = 100;
+        showMessage('🟢 PERFECT CONTACT!');
+      } else if(swingDz < earlyWindow + perfectTiming + lateWindow){
+        timing = 'late';
+        powerMod = 0.6;
+        contactQuality = 65;
+      }
+      
+      const power = (16 + Math.random()*8) * powerMod;
+      const angleUp = 0.5 + Math.random()*0.3;
+      const dir = getForwardVector();
+      a.vel.set(-dir.x*power*0.2 + (Math.random()-0.5)*6, power*angleUp, -power);
+      a.state = 'hit';
+      a.hits++;
+      showMessage(`${timing.toUpperCase()} contact! ${contactQuality}%`);
+    } else {
+      a.state = 'idle';
+      a.strikes++;
+      if(a.strikes>=3){
+        showMessage('STRIKE OUT! Next batter');
+        playCommentatorAudio('Strike three, that batter is out!');
+      }
+      if(a.strikes>=3) a.strikes = 0;
+      resetBaseball(a);
+    }
+  } else {
+    showMessage('Wait for the pitch...');
+  }
+}
+
+function throwFootball(){
+  const a = arenas.football;
+  if(a.thrown) return;
+  
+  // Madden 2027 mechanics: Receiver leading and QB precision
+  const dir = getForwardVector();
+  
+  // QB accuracy based on player position relative to ideal throwing position
+  const localPlayer = dolly.position.clone().sub(a.center);
+  const idealX = 0; // pocket position
+  const posPenalty = Math.abs(localPlayer.x - idealX) * 0.15;
+  const accuracy = Math.max(0.4, 1.0 - posPenalty);
+  
+  // Add trajectory variance based on accuracy
+  const spread = (1 - accuracy) * 0.3;
+  const thrownDir = dir.clone();
+  thrownDir.x += (Math.random() - 0.5) * spread;
+  thrownDir.z += (Math.random() - 0.5) * spread;
+  thrownDir.normalize();
+  
+  const power = 22 * accuracy;
+  const height = 9 + (1 - accuracy) * 3; // Bad throws wobble more
+  
+  a.vel.set(thrownDir.x*power, height, thrownDir.z*power);
+  a.thrown = true;
+  a.attempts++;
+  
+  showMessage(`Pass thrown! Accuracy: ${Math.floor(accuracy*100)}%`);
+}
+
+function resetBaseball(a){
+  a.ball.position.set(0, 1.6, 0);
+  a.vel.set(0,0,0);
+}
+
+/* ---------------------------- PHYSICS UPDATE ------------------------------ */
+
+const GRAVITY = -18;
+
+function updateBallPhysics(a, dt){
+  if(a.vel.lengthSq() === 0 && a.ball.position.y <= 0.3) return;
+  a.vel.y += GRAVITY*dt;
+  a.ball.position.addScaledVector(a.vel, dt);
+  const minY = a.ball.geometry.parameters.radius || 0.25;
+  if(a.ball.position.y < minY){
+    a.ball.position.y = minY;
+    a.vel.y *= -0.42;
+    a.vel.x *= 0.75; a.vel.z *= 0.75;
+    if(Math.abs(a.vel.y) < 0.6) a.vel.y = 0;
+  }
+}
+
+function updateSoccer(a, dt){
+  dribbleTime += dt;
+  updateBallPhysics(a, dt);
+  // friction when rolling
+  if(a.ball.position.y <= 0.29){
+    a.vel.x *= (1 - 0.6*dt);
+    a.vel.z *= (1 - 0.6*dt);
+  }
+  // goal check
+  const p = a.ball.position;
+  if(Math.abs(p.x) > a.goalX-0.3 && Math.abs(p.z) < a.goalW/2 && p.y < a.goalH){
+    a.score++;
+    showMessage('⚽ GOAL!');
+    addCommentary('soccer', `GOAL! What a finish — the score is now ${a.score}!`);
+    p.set(0,0.28,0); a.vel.set(0,0,0);
+  }
+  // out of bounds reset
+  if(Math.abs(p.x) > 24 || Math.abs(p.z) > 16){
+    p.set(0,0.28,0); a.vel.set(0,0,0);
+  }
+}
+
+function updateBasketball(a, dt){
+  dribbleTime += dt;
+  if(a.held){
+    // ball follows player within court with dribbling animation
+    const local = dolly.position.clone().sub(a.center);
+    const dir = getForwardVector();
+    const dribbleBounce = Math.sin(dribbleTime * 8) * 0.15; // faster bounce
+    a.ball.position.set(local.x + dir.x*0.8, 1.2 + Math.max(0, dribbleBounce), local.z + dir.z*0.8);
+    a.ball.rotation.x += dt * 3; // ball spins while dribbling
+    return;
+  }
+  updateBallPhysics(a, dt);
+  const p = a.ball.position;
+  if(!a.scoredThisShot){
+    for(const h of a.hoops){
+      if(Math.abs(p.x-h.x) < 0.4 && Math.abs(p.z-h.z) < 0.4 && p.y > h.y-0.35 && p.y < h.y+0.35 && a.vel.y < 0){
+        a.score += 2;
+        a.scoredThisShot = true;
+        showMessage('🏀 SCORE! +2');
+        addCommentary('basketball', `That's good! Bucket counts, ${a.score} points now.`);
+      }
+    }
+  }
+  if(p.y <= 0.25 && Math.abs(a.vel.y) < 0.1){
+    a.held = true;
+    p.set(0,1.2,0); a.vel.set(0,0,0);
+  }
+}
+
+function updateBaseball(a, dt){
+  dribbleTime += dt;
+  if(a.state === 'idle'){
+    a.pitchTimer -= dt;
+    if(a.pitchTimer <= 0){
+      a.ball.position.set(0, 1.4, 0);
+      a.vel.set((Math.random()-0.5)*1.5, 0.4, 11);
+      a.state = 'pitched';
+    }
+    // dribbling animation when idle - ball spins in hand
+    a.ball.rotation.y += dt * 2;
+    return;
+  }
+  if(a.state === 'pitched'){
+    a.ball.position.addScaledVector(a.vel, dt);
+    a.ball.rotation.z += dt * 5; // spinning pitch
+    if(a.ball.position.z > 14){
+      a.state = 'idle';
+      a.pitchTimer = 2.2;
+      a.strikes++;
+      if(a.strikes>=3){
+        showMessage('STRIKE OUT! Next batter');
+        playCommentatorAudio('Strike three, that batter is out!');
+      }
+      addCommentary('baseball', a.strikes>=3 ? 'Strike three, that batter is out!' : `Strike ${a.strikes} called, right down the middle.`);
+      if(a.strikes>=3) a.strikes = 0;
+      resetBaseball(a);
+    }
+    return;
+  }
+  if(a.state === 'hit'){
+    updateBallPhysics(a, dt);
+    a.ball.rotation.x += dt * 4; // spinning hit ball
+    if(a.ball.position.y <= 0.11 && Math.abs(a.vel.y) < 0.3){
+      const dist = Math.hypot(a.ball.position.x, a.ball.position.z-12);
+      let label = 'Foul ball';
+      if(dist > 30) { label = 'HOME RUN! 🎉'; a.score += 4; }
+      else if(dist > 22){ label='Triple!'; a.score += 3; }
+      else if(dist > 15){ label='Double!'; a.score += 2; }
+      else if(dist > 8){ label='Single!'; a.score += 1; }
+      showMessage(label, 2000);
+      addCommentary('baseball', `${label} Score is now ${a.score}.`);
+      a.state = 'idle'; a.pitchTimer = 2.4;
+      resetBaseball(a);
+    }
+  }
+}
+
+function updateFootball(a, dt){
+  dribbleTime += dt;
+  // receiver runs a simple out-route
+  a.receiver.position.x += a.receiverDir * dt * 3;
+  if(a.receiver.position.x > 14 || a.receiver.position.x < -14) a.receiverDir *= -1;
+
+  if(!a.thrown){
+    a.ball.position.set(0,1,10);
+    a.ball.rotation.y += dt * 1.5; // spinning ball in hand
+    return;
+  }
+  updateBallPhysics(a, dt);
+  a.ball.rotation.z += dt * 3; // spiral rotation
+  const p = a.ball.position;
+  const distToReceiver = Math.hypot(p.x - a.receiver.position.x, p.z - a.receiver.position.z);
+  if(p.y < 1.8 && distToReceiver < 1.8 && a.vel.length() > 0.5){
+    a.score += 6;
+    showMessage('🏈 TOUCHDOWN CATCH!', 2000);
+    addCommentary('football', `TOUCHDOWN! He hauled it in! ${a.score} points on the board!`);
+    a.thrown = false; a.vel.set(0,0,0);
+  } else if(p.y <= 0.2){
+    showMessage('Incomplete pass');
+    addCommentary('football', 'Incomplete — the pass falls to the turf.');
+    a.thrown = false; a.vel.set(0,0,0);
+  }
+}
+
+/* ---------------------------- NPC UPDATE ---------------------------------- */
+
+function updateNPCs(dt, t){
+  for(const n of npcs){
+    if(n.type === 'walker'){
+      const dir = n.target.clone().sub(n.obj.position);
+      dir.y = 0;
+      const d = dir.length();
+      if(d < 1.2){ pickNewTarget(n, 250); }
+      else {
+        dir.normalize();
+        n.obj.position.addScaledVector(dir, n.speed*dt);
+        n.obj.rotation.y = Math.atan2(dir.x, dir.z);
+      }
+      n.bob += dt*6;
+      n.obj.position.y = Math.abs(Math.sin(n.bob))*0.04;
+    } else if(n.type === 'drone'){
+      n.obj.userData.angle += dt*0.15*n.obj.userData.speed*0.2;
+      const u = n.obj.userData;
+      n.obj.position.x = Math.cos(u.angle)*u.radius;
+      n.obj.position.z = Math.sin(u.angle)*u.radius;
+      n.obj.position.y = u.height + Math.sin(t*0.5+u.angle)*3;
+    }
+  }
+  if(window._train){
+    const tr = window._train;
+    tr.t += dt*0.02;
+    if(tr.t > 1) tr.t -= 1;
+    const pos = tr.curve.getPointAt(tr.t);
+    const tangent = tr.curve.getTangentAt(tr.t);
+    tr.mesh.position.copy(pos);
+    tr.mesh.lookAt(pos.clone().add(tangent));
+  }
+}
+
+/* ---------------------------- PLAYER MOVEMENT ------------------------------ */
+
+function updatePlayerMovement(dt){
+  if(renderer.xr.isPresenting){
+    updateVRMovement(dt);
+    return;
+  }
+  pitchObj.rotation.x = pitch;
+  dolly.rotation.y = yaw;
+
+  let mx = 0, mz = 0;
+  if(keys['KeyW']) mz -= 1;
+  if(keys['KeyS']) mz += 1;
+  if(keys['KeyA']) mx -= 1;
+  if(keys['KeyD']) mx += 1;
+  if(isMobile()){ mx = moveVec.x; mz = moveVec.y; }
+
+  const len = Math.hypot(mx,mz);
+  if(len > 0.001){
+    mx/=Math.max(len,1); mz/=Math.max(len,1);
+    const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
+    const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
+    const move = new THREE.Vector3()
+      .addScaledVector(forward, -mz)
+      .addScaledVector(right, mx)
+      .normalize()
+      .multiplyScalar(settings.speed*dt);
+    const next = dolly.position.clone().add(move);
+    resolveCollisions(next);
+    dolly.position.copy(next);
+  }
+  dolly.position.y = 1.7;
+}
+
+function updateVRMovement(dt){
+  const session = renderer.xr.getSession();
+  if(!session) return;
+  let mx=0, mz=0, turn=0;
+  for(const source of session.inputSources){
+    if(!source.gamepad) continue;
+    const gp = source.gamepad;
+    const axes = gp.axes;
+    if(source.handedness === 'left' && axes.length >= 4){
+      mx += axes[2] ?? axes[0] ?? 0;
+      mz += axes[3] ?? axes[1] ?? 0;
+    }
+    if(source.handedness === 'right' && axes.length >= 4){
+      turn += axes[2] ?? axes[0] ?? 0;
+    }
+    if(gp.buttons[0]?.pressed){
+      if(!window._vrTriggerHeld){ doInteract(); window._vrTriggerHeld = true; }
+    } else if(source.handedness === 'right'){
+      window._vrTriggerHeld = false;
+    }
+  }
+  dolly.rotation.y -= turn*dt*1.6;
+  const camDir = new THREE.Vector3();
+  camera.getWorldDirection(camDir); camDir.y = 0; camDir.normalize();
+  const camRight = new THREE.Vector3(camDir.z, 0, -camDir.x);
+  const move = new THREE.Vector3()
+    .addScaledVector(camDir, -mz)
+    .addScaledVector(camRight, mx)
+    .multiplyScalar(settings.speed*dt*0.6);
+  if(move.lengthSq() > 0.00001){
+    const next = dolly.position.clone().add(move);
+    resolveCollisions(next);
+    dolly.position.copy(next);
+  }
+}
+
+function resolveCollisions(pos){
+  const bound = 340;
+  pos.x = Math.max(-bound, Math.min(bound, pos.x));
+  pos.z = Math.max(-bound, Math.min(bound, pos.z));
+  for(const c of collidables){
+    const dx = pos.x - c.x, dz = pos.z - c.z;
+    const d = Math.hypot(dx,dz);
+    if(d < c.r && d > 0.0001){
+      const push = (c.r - d);
+      pos.x += (dx/d)*push;
+      pos.z += (dz/d)*push;
+    }
+  }
+}
+
+/* ---------------------------- HUD ------------------------------------------ */
+
+function updateHUD(){
+  const zoneEl = document.getElementById('zoneName');
+  const scoreEl = document.getElementById('scoreText');
+  const subEl = document.getElementById('subText');
+  const key = currentArenaKey();
+  currentZone = key;
+  if(key === 'hub'){
+    zoneEl.textContent = 'Central Plaza';
+    scoreEl.textContent = '🏙️';
+    subEl.textContent = 'Use the map icon to teleport to an arena';
+  } else {
+    const a = arenas[key];
+    zoneEl.textContent = arenaDisplayName(key);
+    scoreEl.textContent = 'Score: ' + a.score;
+    if(key==='soccer') subEl.textContent = `HOLD SPACE to charge (1=Normal 2=Through 3=Chip) | Power: ${Math.floor(soccerPower)}%`;
+    if(key==='basketball') subEl.textContent = a.held ? 'SPACE to start shot meter (hit GREEN window for bonus!)' : 'Ball in play...';
+    if(key==='baseball') subEl.textContent = `Strikes: ${a.strikes}/3 | Swing on PERFECT timing (early/perfect/late)!`;
+    if(key==='football') subEl.textContent = a.thrown ? 'Ball in the air...' : 'SPACE to throw (accuracy based on pocket position)';
+  }
+}
+
+/* ---------------------------- ANIMATE --------------------------------------- */
+
+function animate(){
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const t = clock.getElapsedTime();
+
+  updatePlayerMovement(dt);
+  updateNPCs(dt, t);
+
+  updateSoccer(arenas.soccer, dt);
+  updateBasketball(arenas.basketball, dt);
+  updateBaseball(arenas.baseball, dt);
+  updateFootball(arenas.football, dt);
+
+  updateArenaPlayers(arenas.soccer, dt);
+  updateArenaPlayers(arenas.basketball, dt);
+  updateArenaPlayers(arenas.baseball, dt);
+  updateArenaPlayers(arenas.football, dt);
+
+  updateHUD();
+  updateCommentaryTimers(dt);
+  renderCommentary();
+
+  renderer.render(scene, camera);
+}
+
+/* Start the game now that every const/let/function above is fully declared
+   (calling init() any earlier risks "cannot access before initialization"
+   errors for anything declared later in the file). */
+init();
+</script>
+</body>
+</html>
