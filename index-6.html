@@ -107,6 +107,14 @@
     padding:14px 28px; font-size:16px; border-radius:30px; background:linear-gradient(135deg,#2ecc71,#16a085);
     border:none; color:#fff; cursor:pointer; font-weight:700; letter-spacing:.5px;
   }
+  #characterSelect { display:grid; grid-template-columns:repeat(5, minmax(92px, 1fr)); gap:8px; width:min(760px, 94vw); margin:2px 0 16px; }
+  .characterCard { appearance:none; border:2px solid rgba(255,255,255,.22); border-radius:12px; padding:10px 7px; cursor:pointer; color:#fff; background:rgba(255,255,255,.08); font:inherit; text-align:center; }
+  .characterCard:hover, .characterCard.selected { border-color:#fff; background:rgba(255,255,255,.22); transform:translateY(-2px); }
+  .characterCard .charIcon { display:block; font-size:25px; margin-bottom:3px; }
+  .characterCard strong { display:block; font-size:12px; }
+  .characterCard small { display:block; margin-top:3px; font-size:10px; opacity:.8; line-height:1.25; }
+  #abilityBtn { bottom:50px; right:130px; width:82px; height:82px; border-radius:50%; background:rgba(43,110,255,.58); border:2px solid rgba(255,255,255,.58); color:#fff; font-size:11px; font-weight:700; text-align:center; display:flex; align-items:center; justify-content:center; cursor:pointer; }
+  @media (max-width:650px) { #characterSelect { grid-template-columns:repeat(2, minmax(110px,1fr)); max-height:250px; overflow:auto; } #abilityBtn { bottom:145px; right:24px; width:68px; height:68px; } }
   #blocker.hidden { display:none; }
 
   #mobileControls { position:fixed; inset:0; z-index:22; pointer-events:none; display:none; }
@@ -137,7 +145,14 @@
 <div id="blocker">
   <h1>🌿 VERDE CITY</h1>
   <p>An eco-futuristic city with four playable sports arenas. Explore on foot, teleport between arenas, and play Soccer, Basketball, Baseball, and Football. Works on desktop (WASD + mouse), mobile (touch joysticks), and Meta Quest 3 (WebXR — tap "Enter VR" once loaded).</p>
-  <p style="font-size:12px;opacity:.7">Desktop: WASD to move, mouse to look, Space/E to interact, ESC to release cursor.<br>Mobile: left stick to move, drag right side to look, tap the green button to act.</p>
+  <p style="font-size:12px;opacity:.7">Choose a character, then use Q (or ABILITY) for their special move. Desktop: WASD to move, Space/E to interact.<br>Mobile: left stick to move, drag right side to look, tap the green button to act.</p>
+  <div id="characterSelect">
+    <button class="characterCard" data-character="striker"><span class="charIcon">⚽</span><strong>Nova Striker</strong><small>Turbo Kick</small></button>
+    <button class="characterCard" data-character="shooter"><span class="charIcon">🏀</span><strong>Jax Shooter</strong><small>Clutch Range</small></button>
+    <button class="characterCard" data-character="slugger"><span class="charIcon">⚾</span><strong>Riley Slugger</strong><small>Power Swing</small></button>
+    <button class="characterCard" data-character="quarterback"><span class="charIcon">🏈</span><strong>Casey QB</strong><small>Laser Pass</small></button>
+    <button class="characterCard selected" data-character="explorer"><span class="charIcon">💎</span><strong>Sky Explorer</strong><small>City Sprint + Gems</small></button>
+  </div>
   <button class="startBtn" id="startBtn">Enter Verde City ▶</button>
 </div>
 
@@ -156,6 +171,7 @@
 
 <div class="iconBtn" id="menuBtn">🗺️</div>
 <div class="iconBtn" id="settingsBtn">⚙️</div>
+<button class="iconBtn" id="abilityBtn">ABILITY<br>Q</button>
 
 <div class="panel hidden" id="teleportMenu">
   <span class="closeX" data-close="teleportMenu">✕</span>
@@ -257,6 +273,18 @@ const npcs = [];
 const arenas = {}; // name -> data
 let currentZone = 'hub';
 let dribbleTime = 0; // for dribbling animations
+const gems = [];
+let gemsCollected = 0;
+let selectedCharacter = 'explorer';
+let abilityReadyAt = 0;
+const abilityState = { basketball:false, baseball:false, football:false, exploreUntil:0 };
+const characters = {
+  striker: { name:'Nova Striker', ability:'Turbo Kick', sport:'soccer' },
+  shooter: { name:'Jax Shooter', ability:'Clutch Range', sport:'basketball' },
+  slugger: { name:'Riley Slugger', ability:'Power Swing', sport:'baseball' },
+  quarterback: { name:'Casey QB', ability:'Laser Pass', sport:'football' },
+  explorer: { name:'Sky Explorer', ability:'City Sprint + Gem Sense', sport:'hub' }
+};
 
 /* Game Mechanics State */
 let shootingTimer = null;
@@ -380,7 +408,7 @@ function spawnArenaPlayers(arenaData, zoneKey, jerseyColorsA, jerseyColorsB, way
     const start = waypointFn();
     p.position.copy(start);
     arenaData.group.add(p);
-    players.push({ obj:p, target: waypointFn(), speed: 1.4 + Math.random()*1.2, bob:Math.random()*10, actionTimer: 2+Math.random()*3 });
+    players.push({ obj:p, target: waypointFn(), team:i%2, role:Math.floor(i/2)%4, speed:1.8 + Math.random()*0.8, bob:Math.random()*10, actionTimer:2+Math.random()*3 });
   }
   arenaData.players = players;
   arenaData.zoneKey = zoneKey;
@@ -389,6 +417,8 @@ function spawnArenaPlayers(arenaData, zoneKey, jerseyColorsA, jerseyColorsB, way
 
 function updateArenaPlayers(arenaData, dt){
   if(!arenaData.players) return;
+  if(arenaData.zoneKey === 'soccer') return updateSoccerTeams(arenaData, dt);
+  if(arenaData.zoneKey === 'basketball') return updateBasketballTeams(arenaData, dt);
   for(const pl of arenaData.players){
     const dir = pl.target.clone().sub(pl.obj.position);
     dir.y = 0;
@@ -413,6 +443,62 @@ function updateArenaPlayers(arenaData, dt){
       }
     }
   }
+}
+
+function moveArenaPlayer(pl, target, dt){
+  const dir = target.clone().sub(pl.obj.position);
+  dir.y = 0;
+  const distance = dir.length();
+  if(distance > 0.25){
+    dir.normalize();
+    pl.obj.position.addScaledVector(dir, Math.min(distance, pl.speed*dt));
+    pl.obj.rotation.y = Math.atan2(dir.x, dir.z);
+  }
+  pl.bob += dt*7;
+  pl.obj.position.y = Math.abs(Math.sin(pl.bob))*0.035;
+}
+
+function updateSoccerTeams(a, dt){
+  const ball = a.ball.position;
+  // The side nearest the ball presses; the other side drops between the ball and its own goal.
+  if(a.possessionTeam === undefined || a.vel.lengthSq() > 0.4){
+    const nearest = a.players.reduce((best, pl)=> pl.obj.position.distanceToSquared(ball) < best.obj.position.distanceToSquared(ball) ? pl : best, a.players[0]);
+    a.possessionTeam = nearest.team;
+  }
+  const attackers = a.players.filter(pl=>pl.team === a.possessionTeam);
+  const defenders = a.players.filter(pl=>pl.team !== a.possessionTeam);
+  const chaser = attackers.reduce((best, pl)=> pl.obj.position.distanceToSquared(ball) < best.obj.position.distanceToSquared(ball) ? pl : best, attackers[0]);
+  const defenderPress = defenders.reduce((best, pl)=> pl.obj.position.distanceToSquared(ball) < best.obj.position.distanceToSquared(ball) ? pl : best, defenders[0]);
+  const attackGoalX = a.possessionTeam === 0 ? 20 : -20;
+  attackers.forEach((pl, i)=>{
+    const target = pl === chaser ? ball : new THREE.Vector3(
+      THREE.MathUtils.lerp(ball.x, attackGoalX, 0.42 + i*0.08),
+      0, THREE.MathUtils.clamp(ball.z + (i-1.5)*5, -12, 12)
+    );
+    moveArenaPlayer(pl, target, dt);
+  });
+  defenders.forEach((pl, i)=>{
+    const target = pl === defenderPress ? ball.clone().multiplyScalar(0.93) : new THREE.Vector3(
+      THREE.MathUtils.lerp(ball.x, -attackGoalX, 0.28),
+      0, THREE.MathUtils.clamp(ball.z + (i-1.5)*4.5, -12, 12)
+    );
+    moveArenaPlayer(pl, target, dt);
+  });
+}
+
+function updateBasketballTeams(a, dt){
+  if(a.possessionTeam === undefined) a.possessionTeam = 0;
+  if(a.lastScore !== a.score){ a.possessionTeam = 1-a.possessionTeam; a.lastScore = a.score; }
+  const offense = a.players.filter(pl=>pl.team === a.possessionTeam);
+  const defense = a.players.filter(pl=>pl.team !== a.possessionTeam);
+  const basketX = a.possessionTeam === 0 ? 30 : -30;
+  const spots = [[basketX*0.55,0], [basketX*0.42,11], [basketX*0.42,-11], [basketX*0.72,5]];
+  offense.forEach((pl, i)=> moveArenaPlayer(pl, new THREE.Vector3(...spots[i%spots.length]), dt));
+  defense.forEach((pl, i)=>{
+    const mark = offense[i%offense.length].obj.position;
+    // Defenders stay between their assignment and the hoop, as in man-to-man defense.
+    moveArenaPlayer(pl, new THREE.Vector3(mark.x*0.92 + basketX*0.08, 0, mark.z*0.9), dt);
+  });
 }
 
 /* ---------------------------- INIT ------------------------------------- */
@@ -461,6 +547,7 @@ function init(){
   buildWorld();
   buildAllArenas();
   spawnCityNPCs();
+  buildCityGems();
 
   window.addEventListener('resize', onResize);
   setupDesktopInput();
@@ -512,6 +599,105 @@ function makeWindowTexture(base, glow){
   const tex = new THREE.CanvasTexture(c);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   return tex;
+}
+
+function makeGrassTexture(){
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 512;
+  const ctx = canvas.getContext('2d');
+  const stripeWidth = canvas.width / 9;
+  for(let x=0; x<canvas.width; x+=stripeWidth){
+    ctx.fillStyle = (Math.floor(x / stripeWidth) % 2 === 0) ? '#28783b' : '#236e36';
+    ctx.fillRect(x, 0, stripeWidth + 1, canvas.height);
+  }
+  // Fine flecks keep the turf from looking like a flat green card.
+  for(let i=0; i<4200; i++){
+    const shade = Math.random() > 0.5 ? 'rgba(190,255,175,.09)' : 'rgba(4,48,16,.12)';
+    ctx.fillStyle = shade;
+    ctx.fillRect(Math.random()*canvas.width, Math.random()*canvas.height, 1, 1);
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.anisotropy = renderer ? renderer.capabilities.getMaxAnisotropy() : 1;
+  texture.encoding = THREE.sRGBEncoding;
+  return texture;
+}
+
+function makeSoccerBall(){
+  const ball = new THREE.Mesh(
+    new THREE.SphereGeometry(0.31, 32, 24),
+    new THREE.MeshStandardMaterial({ color:0xf7f7f2, roughness:0.58, metalness:0.04 })
+  );
+  // Raised pentagons give this ball a readable classic-panel design at play distance.
+  const panelMat = new THREE.MeshStandardMaterial({ color:0x172235, roughness:0.46, metalness:0.12 });
+  const panelNormals = [
+    [0,1,0], [0,-1,0], [1,0,0], [-1,0,0], [0,0,1], [0,0,-1],
+    [.58,.58,.58], [-.58,.58,.58], [.58,.58,-.58], [-.58,.58,-.58],
+    [.58,-.58,.58], [-.58,-.58,-.58]
+  ];
+  panelNormals.forEach((entry, index)=>{
+    const normal = new THREE.Vector3(...entry).normalize();
+    const panel = new THREE.Mesh(new THREE.CircleGeometry(0.105, 5), panelMat);
+    panel.position.copy(normal.multiplyScalar(0.313));
+    panel.lookAt(normal.multiplyScalar(2));
+    panel.rotateZ(index * 0.45);
+    ball.add(panel);
+  });
+  ball.castShadow = true;
+  return ball;
+}
+
+function addCourtMark(group, x, y, z, width, depth, color){
+  const mark = new THREE.Mesh(new THREE.PlaneGeometry(width, depth), new THREE.MeshBasicMaterial({color}));
+  mark.rotation.x = -Math.PI / 2;
+  mark.position.set(x, y, z);
+  group.add(mark);
+  return mark;
+}
+
+function addLineBoxAt(group, x, y, z, w, d, color){
+  const pts = [
+    new THREE.Vector3(x-w/2,y,z-d/2), new THREE.Vector3(x+w/2,y,z-d/2),
+    new THREE.Vector3(x+w/2,y,z+d/2), new THREE.Vector3(x-w/2,y,z+d/2),
+    new THREE.Vector3(x-w/2,y,z-d/2)
+  ];
+  group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({color})));
+}
+
+function addBasketballThreePointLine(group, side, color){
+  const hoopX = side * 32.05;
+  const radius = 22;
+  const endZ = 18;
+  const points = [];
+  // The arc opens toward center court: left hoop uses the right half; right hoop uses the left half.
+  const start = side < 0 ? -0.96 : Math.PI + 0.96;
+  const end = side < 0 ? 0.96 : Math.PI - 0.96;
+  for(let i=0; i<=48; i++){
+    const a = start + (end-start) * i/48;
+    points.push(new THREE.Vector3(hoopX + Math.cos(a)*radius, 0.095, Math.sin(a)*radius));
+  }
+  // Short straight segments connect each arc to the baseline, completing the 3-point line.
+  points.unshift(new THREE.Vector3(side*34.9, 0.095, -endZ));
+  points.push(new THREE.Vector3(side*34.9, 0.095, endZ));
+  group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), new THREE.LineBasicMaterial({color})));
+}
+
+function makeCenterLogo(){
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 512;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#cf2438';
+  ctx.beginPath(); ctx.arc(256,256,246,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 18;
+  ctx.beginPath(); ctx.arc(256,256,230,0,Math.PI*2); ctx.stroke();
+  ctx.fillStyle = '#0b4fa3'; ctx.font = 'bold 260px Arial';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('SC',256,280);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.encoding = THREE.sRGBEncoding;
+  const logo = new THREE.Mesh(new THREE.CircleGeometry(5.4, 48), new THREE.MeshBasicMaterial({map:texture, transparent:true}));
+  logo.rotation.x = -Math.PI/2;
+  logo.position.y = 0.078;
+  return logo;
 }
 
 /* ---------------------------- WORLD ------------------------------------ */
@@ -634,8 +820,10 @@ function addTrees(n){
     const ang = Math.random()*Math.PI*2;
     const rad = 20 + Math.random()*270;
     const x = Math.cos(ang)*rad, z = Math.sin(ang)*rad;
-    // avoid river band & arenas roughly
+    // Keep every playing surface, its sidelines, and its stands clear of city trees.
     if(Math.abs(x) < 20 && Math.abs(z) < 230) continue;
+    const arenaCenters = [[-125,-125], [125,-125], [-125,125], [125,125]];
+    if(arenaCenters.some(([ax,az]) => Math.hypot(x-ax, z-az) < 65)) continue;
     const s = 0.7 + Math.random()*0.9;
     dummy.position.set(x, 1.2*s, z);
     dummy.scale.set(s,s,s);
@@ -955,12 +1143,12 @@ function buildBasketballArena(center){
   group.add(arenaLabel('VERDE ARENA — BASKETBALL', new THREE.Vector3(0,16,-18), '#33ddaa'));
 
   let ball = new THREE.Mesh(new THREE.SphereGeometry(0.24,16,16), new THREE.MeshStandardMaterial({color:0xd35400}));
-  ball.position.set(0,1.2,0);
+  ball.position.set(0,0.25,0);
   group.add(ball);
   
   const data = {
     type:'basketball', group, center, spawn:new THREE.Vector3(0,1.7,12).add(center),
-    ball, vel:new THREE.Vector3(), score:0, held:true,
+    ball, vel:new THREE.Vector3(), score:0, held:false, possessionTeam:0, lastScore:0,
     hoops:[{x:-33+0.95,y:3.3-0.5,z:0},{x:33-0.95,y:3.3-0.5,z:0}],
     radius: 40
   };
@@ -968,7 +1156,7 @@ function buildBasketballArena(center){
   loadBasketballModel().then((basketballModel)=>{
     group.remove(ball);
     ball = basketballModel.clone();
-    ball.position.set(0,1.2,0);
+    ball.position.set(0,0.25,0);
     group.add(ball);
     data.ball = ball;
   });
@@ -1138,6 +1326,7 @@ function setupDesktopInput(){
 
   window.addEventListener('keydown', (e)=>{
     keys[e.code] = true;
+    if(e.code === 'KeyQ' && !e.repeat){ activateAbility(); return; }
     
     // Sport-specific controls
     if(currentZone === 'soccer'){
@@ -1234,6 +1423,9 @@ function setupMobileInput(){
   document.getElementById('actionBtn').addEventListener('touchstart', (e)=>{
     doInteract(); e.preventDefault();
   }, {passive:false});
+  document.getElementById('abilityBtn').addEventListener('touchstart', (e)=>{
+    activateAbility(); e.preventDefault();
+  }, {passive:false});
 }
 
 /* ---------------------------- UI ---------------------------------------- */
@@ -1267,6 +1459,78 @@ function setupUI(){
     window._sunLight.castShadow = settings.shadows;
   };
   document.getElementById('invertToggle').onchange = (e)=> settings.invert = e.target.checked;
+
+  document.querySelectorAll('[data-character]').forEach(btn=>{
+    btn.onclick = ()=> selectCharacter(btn.dataset.character);
+  });
+  document.getElementById('abilityBtn').onclick = activateAbility;
+}
+
+function selectCharacter(id){
+  selectedCharacter = id;
+  document.querySelectorAll('[data-character]').forEach(btn=> btn.classList.toggle('selected', btn.dataset.character === id));
+}
+
+function activateAbility(){
+  const now = Date.now();
+  if(now < abilityReadyAt){
+    showMessage(`Ability recharging: ${Math.ceil((abilityReadyAt-now)/1000)}s`);
+    return;
+  }
+  const character = characters[selectedCharacter];
+  if(selectedCharacter === 'explorer'){
+    abilityState.exploreUntil = now + 6000;
+    abilityReadyAt = now + 10000;
+    showMessage('💎 GEM SENSE! City Sprint active for 6 seconds');
+    return;
+  }
+  if(currentZone !== character.sport){
+    showMessage(`${character.ability} is available in the ${arenaDisplayName(character.sport)}.`);
+    return;
+  }
+  abilityReadyAt = now + 9000;
+  if(selectedCharacter === 'striker'){
+    soccerPower = Math.max(soccerPower, 92);
+    showMessage('⚽ TURBO KICK loaded — shoot now!');
+  } else if(selectedCharacter === 'shooter'){
+    abilityState.basketball = true;
+    showMessage('🏀 CLUTCH RANGE — next shot is green!');
+  } else if(selectedCharacter === 'slugger'){
+    abilityState.baseball = true;
+    showMessage('⚾ POWER SWING — next contact is boosted!');
+  } else if(selectedCharacter === 'quarterback'){
+    abilityState.football = true;
+    showMessage('🏈 LASER PASS — next throw is pinpoint!');
+  }
+}
+
+function buildCityGems(){
+  const gemMat = new THREE.MeshStandardMaterial({ color:0x5ee7ff, emissive:0x147db1, emissiveIntensity:1.2, metalness:0.65, roughness:0.18 });
+  const locations = [
+    [-18,-8], [14,-12], [30,18], [-35,25], [58,-18], [-61,8], [81,28], [-85,-35],
+    [105,62], [-110,58], [148,-12], [-145,-14], [35,82], [-38,-90], [96,-76], [-96,88],
+    [185,45], [-184,40], [24,142], [-24,-145], [202,-55], [-208,-52], [6,205], [-5,-205]
+  ];
+  locations.forEach(([x,z])=>{
+    const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.55, 0), gemMat);
+    gem.position.set(x, 1.15, z);
+    scene.add(gem);
+    gems.push({ mesh:gem, baseY:1.15, collected:false, phase:Math.random()*Math.PI*2 });
+  });
+}
+
+function updateCityGems(t){
+  for(const gem of gems){
+    if(gem.collected) continue;
+    gem.mesh.rotation.y += 0.035;
+    gem.mesh.position.y = gem.baseY + Math.sin(t*3 + gem.phase)*0.16;
+    if(dolly.position.distanceTo(gem.mesh.position) < 1.75){
+      gem.collected = true;
+      scene.remove(gem.mesh);
+      gemsCollected++;
+      showMessage(`💎 Gem collected! ${gemsCollected}/${gems.length}`);
+    }
+  }
 }
 
 function teleportTo(name){
@@ -1355,7 +1619,15 @@ function kickSoccer(){
 function shootBasketball(){
   const a = arenas.basketball;
   const localPlayer = dolly.position.clone().sub(a.center);
-  if(!a.held) return;
+  if(!a.held){
+    if(localPlayer.distanceTo(a.ball.position) < 2.4){
+      a.held = true;
+      showMessage('🏀 Ball picked up — line up your shot.');
+    } else {
+      showMessage('Move closer to the basketball to pick it up.');
+    }
+    return;
+  }
   if(localPlayer.distanceTo(a.ball.position) > 8){ showMessage('Move closer to the hoop'); return; }
   
   // 2K mechanics: Timing-based shot with green window
@@ -1400,17 +1672,25 @@ function shootBasketball(){
   // Perfect release bonus
   const greenStart = (1 - PERFECT_WINDOW) / 2;
   const greenEnd = (1 + PERFECT_WINDOW) / 2;
-  const isPerfect = cyclePos > greenStart && cyclePos < greenEnd;
-  shotAccuracy = isPerfect ? 100 : Math.floor(shotPower);
+  const isPerfect = cyclePos > greenStart && cyclePos < greenEnd || abilityState.basketball;
+  // A forgiving release window keeps casual shots playable even outside the green zone.
+  shotAccuracy = isPerfect ? 100 : Math.max(78, Math.floor(shotPower));
+  abilityState.basketball = false;
   
-  const dir = getForwardVector();
-  const dist = localPlayer.length();
-  const basePower = 6 + Math.min(dist,14)*0.55;
-  const accuracyMod = shotAccuracy / 100;
-  
-  a.vel.set(dir.x*basePower*0.6*accuracyMod, 7.5*accuracyMod, dir.z*basePower*0.6*accuracyMod);
+  const targetHoop = a.hoops.reduce((nearest, hoop) =>
+    Math.hypot(localPlayer.x-hoop.x, localPlayer.z-hoop.z) < Math.hypot(localPlayer.x-nearest.x, localPlayer.z-nearest.z) ? hoop : nearest
+  );
+  const aim = new THREE.Vector3(targetHoop.x-localPlayer.x, 0, targetHoop.z-localPlayer.z);
+  const hoopDistance = aim.length();
+  aim.normalize();
+  // Soft aim assist calculates a makeable arc directly to the closest hoop.
+  const flightTime = THREE.MathUtils.clamp(0.58 + hoopDistance*0.026, 0.65, 1.35);
+  const horizontalSpeed = hoopDistance / flightTime;
+  const verticalSpeed = (targetHoop.y - 1.15 - 0.5*GRAVITY*flightTime*flightTime) / flightTime;
+  a.vel.set(aim.x*horizontalSpeed, verticalSpeed, aim.z*horizontalSpeed);
   a.held = false;
   a.scoredThisShot = false;
+  a.shotValue = hoopDistance >= 21.5 ? 3 : 2;
   
   showMessage(isPerfect ? '🟢 PERFECT RELEASE!' : `Shot Release: ${Math.floor(shotAccuracy)}% Accuracy`);
   shotPower = 0;
@@ -1450,12 +1730,14 @@ function swingBat(){
         contactQuality = 65;
       }
       
-      const power = (16 + Math.random()*8) * powerMod;
+      const powerBoost = abilityState.baseball ? 1.7 : 1;
+      const power = (16 + Math.random()*8) * powerMod * powerBoost;
       const angleUp = 0.5 + Math.random()*0.3;
       const dir = getForwardVector();
       a.vel.set(-dir.x*power*0.2 + (Math.random()-0.5)*6, power*angleUp, -power);
       a.state = 'hit';
       a.hits++;
+      abilityState.baseball = false;
       showMessage(`${timing.toUpperCase()} contact! ${contactQuality}%`);
     } else {
       a.state = 'idle';
@@ -1483,7 +1765,7 @@ function throwFootball(){
   const localPlayer = dolly.position.clone().sub(a.center);
   const idealX = 0; // pocket position
   const posPenalty = Math.abs(localPlayer.x - idealX) * 0.15;
-  const accuracy = Math.max(0.4, 1.0 - posPenalty);
+  const accuracy = abilityState.football ? 1 : Math.max(0.4, 1.0 - posPenalty);
   
   // Add trajectory variance based on accuracy
   const spread = (1 - accuracy) * 0.3;
@@ -1492,12 +1774,13 @@ function throwFootball(){
   thrownDir.z += (Math.random() - 0.5) * spread;
   thrownDir.normalize();
   
-  const power = 22 * accuracy;
+  const power = (abilityState.football ? 30 : 22) * accuracy;
   const height = 9 + (1 - accuracy) * 3; // Bad throws wobble more
   
   a.vel.set(thrownDir.x*power, height, thrownDir.z*power);
   a.thrown = true;
   a.attempts++;
+  abilityState.football = false;
   
   showMessage(`Pass thrown! Accuracy: ${Math.floor(accuracy*100)}%`);
 }
@@ -1549,29 +1832,29 @@ function updateSoccer(a, dt){
 function updateBasketball(a, dt){
   dribbleTime += dt;
   if(a.held){
-    // ball follows player within court with dribbling animation
+    // The ball is held at the player's side until a shot; it is no longer a bouncing starter avatar.
     const local = dolly.position.clone().sub(a.center);
     const dir = getForwardVector();
-    const dribbleBounce = Math.sin(dribbleTime * 8) * 0.15; // faster bounce
-    a.ball.position.set(local.x + dir.x*0.8, 1.2 + Math.max(0, dribbleBounce), local.z + dir.z*0.8);
-    a.ball.rotation.x += dt * 3; // ball spins while dribbling
+    a.ball.position.set(local.x + dir.x*0.72, 1.15, local.z + dir.z*0.72);
+    a.ball.rotation.x += dt * 1.5;
     return;
   }
   updateBallPhysics(a, dt);
   const p = a.ball.position;
   if(!a.scoredThisShot){
     for(const h of a.hoops){
-      if(Math.abs(p.x-h.x) < 0.4 && Math.abs(p.z-h.z) < 0.4 && p.y > h.y-0.35 && p.y < h.y+0.35 && a.vel.y < 0){
-        a.score += 2;
+      if(Math.abs(p.x-h.x) < 0.7 && Math.abs(p.z-h.z) < 0.7 && p.y > h.y-0.55 && p.y < h.y+0.55 && a.vel.y < 0){
+        const points = a.shotValue || 2;
+        a.score += points;
         a.scoredThisShot = true;
-        showMessage('🏀 SCORE! +2');
-        addCommentary('basketball', `That's good! Bucket counts, ${a.score} points now.`);
+        showMessage(`🏀 SCORE! +${points}`);
+        addCommentary('basketball', `That's good for ${points}! ${a.score} points now.`);
       }
     }
   }
   if(p.y <= 0.25 && Math.abs(a.vel.y) < 0.1){
-    a.held = true;
-    p.set(0,1.2,0); a.vel.set(0,0,0);
+    a.held = false;
+    p.set(0,0.25,0); a.vel.set(0,0,0);
   }
 }
 
@@ -1711,7 +1994,7 @@ function updatePlayerMovement(dt){
       .addScaledVector(forward, -mz)
       .addScaledVector(right, mx)
       .normalize()
-      .multiplyScalar(settings.speed*dt);
+      .multiplyScalar(settings.speed * (Date.now() < abilityState.exploreUntil ? 1.8 : 1) * dt);
     const next = dolly.position.clone().add(move);
     resolveCollisions(next);
     dolly.position.copy(next);
@@ -1780,16 +2063,18 @@ function updateHUD(){
   currentZone = key;
   if(key === 'hub'){
     zoneEl.textContent = 'Central Plaza';
-    scoreEl.textContent = '🏙️';
-    subEl.textContent = 'Use the map icon to teleport to an arena';
+    scoreEl.textContent = `💎 ${gemsCollected}/${gems.length}`;
+    const character = characters[selectedCharacter];
+    subEl.textContent = `${character.name} — Q: ${character.ability}`;
   } else {
     const a = arenas[key];
     zoneEl.textContent = arenaDisplayName(key);
     scoreEl.textContent = 'Score: ' + a.score;
-    if(key==='soccer') subEl.textContent = `HOLD SPACE to charge (1=Normal 2=Through 3=Chip) | Power: ${Math.floor(soccerPower)}%`;
-    if(key==='basketball') subEl.textContent = a.held ? 'SPACE to start shot meter (hit GREEN window for bonus!)' : 'Ball in play...';
-    if(key==='baseball') subEl.textContent = `Strikes: ${a.strikes}/3 | Swing on PERFECT timing (early/perfect/late)!`;
-    if(key==='football') subEl.textContent = a.thrown ? 'Ball in the air...' : 'SPACE to throw (accuracy based on pocket position)';
+    const abilityHint = ` | Q: ${characters[selectedCharacter].ability}`;
+    if(key==='soccer') subEl.textContent = `HOLD SPACE to charge (1=Normal 2=Through 3=Chip) | Power: ${Math.floor(soccerPower)}%${abilityHint}`;
+    if(key==='basketball') subEl.textContent = (a.held ? 'SPACE to start shot meter (hit GREEN window for bonus!)' : 'Move to the ball and press SPACE to pick it up.') + abilityHint;
+    if(key==='baseball') subEl.textContent = `Strikes: ${a.strikes}/3 | Swing on PERFECT timing (early/perfect/late)!${abilityHint}`;
+    if(key==='football') subEl.textContent = (a.thrown ? 'Ball in the air...' : 'SPACE to throw (accuracy based on pocket position)') + abilityHint;
   }
 }
 
@@ -1801,6 +2086,7 @@ function animate(){
 
   updatePlayerMovement(dt);
   updateNPCs(dt, t);
+  updateCityGems(t);
 
   updateSoccer(arenas.soccer, dt);
   updateBasketball(arenas.basketball, dt);
