@@ -136,6 +136,14 @@
   }
 
   #vrBtnHolder { position:fixed; bottom:16px; left:50%; transform:translateX(-50%); z-index:35; }
+  #matchBoard { position:fixed; top:14px; left:50%; transform:translateX(-50%); z-index:26; min-width:250px; text-align:center; color:#fff; background:rgba(5,16,12,.78); border:1px solid rgba(120,255,170,.42); border-radius:10px; padding:7px 14px; font-size:12px; text-shadow:0 1px 3px #000; pointer-events:none; }
+  #matchBoard.hidden, #joinTeamPanel.hidden { display:none; }
+  #matchScore { font-size:20px; font-weight:800; letter-spacing:.5px; }
+  #matchMeta { color:#bfe8cc; margin-top:2px; }
+  #joinTeamPanel { position:fixed; z-index:45; left:50%; bottom:72px; transform:translateX(-50%); min-width:280px; text-align:center; color:#eaffea; background:rgba(5,16,12,.92); border:1px solid rgba(120,255,170,.45); border-radius:12px; padding:12px; }
+  #joinTeamPanel p { margin:0 0 9px; font-size:12px; color:#c9f8d7; }
+  .joinTeamBtn { border:1px solid rgba(255,255,255,.35); border-radius:8px; color:#fff; padding:8px 11px; margin:0 3px; cursor:pointer; font-weight:700; }
+  .joinTeamBtn.red { background:#b93737; } .joinTeamBtn.blue { background:#346fc4; } .joinTeamBtn.spectate { background:#365244; }
 
   ::-webkit-scrollbar { display:none; }
 </style>
@@ -145,7 +153,7 @@
 <div id="blocker">
   <h1>🌿 VERDE CITY</h1>
   <p>An eco-futuristic city with four playable sports arenas. Explore on foot, teleport between arenas, and play Soccer, Basketball, Baseball, and Football. Works on desktop (WASD + mouse), mobile (touch joysticks), and Meta Quest 3 (WebXR — tap "Enter VR" once loaded).</p>
-  <p style="font-size:12px;opacity:.7">Choose a character, then use Q (or ABILITY) for their special move. Desktop: WASD to move, Space/E to interact.<br>Mobile: left stick to move, drag right side to look, tap the green button to act.</p>
+  <p style="font-size:12px;opacity:.7">Choose a character, then use Q (or ABILITY) for their special move. Desktop: Soccer SPACE/F · Basketball X/C · Baseball Z · Football V.<br>Mobile: left stick to move, drag right side to look, tap the green button to act.</p>
   <div id="characterSelect">
     <button class="characterCard" data-character="striker"><span class="charIcon">⚽</span><strong>Nova Striker</strong><small>Turbo Kick</small></button>
     <button class="characterCard" data-character="shooter"><span class="charIcon">🏀</span><strong>Jax Shooter</strong><small>Clutch Range</small></button>
@@ -168,6 +176,21 @@
   <div class="greenZone" id="greenZone"></div>
 </div>
 <div id="commentary"></div>
+<div id="matchBoard" class="hidden"><div id="matchScore"></div><div id="matchMeta"></div></div>
+<div id="joinTeamPanel" class="hidden">
+  <p>Join the Solaris match</p>
+  <button class="joinTeamBtn red" data-join-team="0">Join Red</button>
+  <button class="joinTeamBtn blue" data-join-team="1">Join Blue</button>
+  <button class="joinTeamBtn spectate" data-join-team="">Spectate</button>
+</div>
+
+<!--
+  Add the licensed download from Epidemic Sound here:
+  music/the-olympic-team--philip-ayers.mp3
+-->
+<audio id="openingMusic" preload="auto" loop>
+  <source src="music/the-olympic-team--philip-ayers.mp3" type="audio/mpeg">
+</audio>
 
 <div class="iconBtn" id="menuBtn">🗺️</div>
 <div class="iconBtn" id="settingsBtn">⚙️</div>
@@ -263,6 +286,19 @@ function createVRButton(renderer){
 let scene, camera, renderer, dolly, pitchObj;
 let clock = new THREE.Clock();
 const settings = { sens: 2.5, speed: 6.0, invert: false, shadows: false };
+
+const openingMusic = document.getElementById('openingMusic');
+let openingMusicStarted = false;
+
+function startOpeningMusic(){
+  if(openingMusicStarted || !openingMusic) return;
+  openingMusicStarted = true;
+  openingMusic.volume = 0.45;
+  // Starting from the Enter button's user gesture keeps this compatible with
+  // browser autoplay policies. If the licensed file has not been added yet,
+  // the game continues normally without music.
+  openingMusic.play().catch(()=>{});
+}
 
 const keys = {};
 let pointerLocked = false;
@@ -400,6 +436,366 @@ function updateCommentaryTimers(dt){
 // Cosmetic AI "players" that run around each field/court so the arenas feel alive
 // and like a real match is happening, independent of the user's own ball/controls.
 
+/* ---------------------------- MATCH SIMULATION ---------------------------- */
+// The simulation deliberately uses a low fixed AI rate. Rendering interpolates
+// mesh movement every frame, while decisions only happen eight times per second.
+const AgentState = Object.freeze({
+  RETURN_TO_POSITION:'RETURN_TO_POSITION', CHASE_BALL:'CHASE_BALL', CARRY:'CARRY',
+  PASS:'PASS', SHOOT:'SHOOT', MARK_OPPONENT:'MARK_OPPONENT', PRESS:'PRESS',
+  TACKLE:'TACKLE', INTERCEPT:'INTERCEPT', KEEP_GOAL:'KEEP_GOAL'
+});
+
+class MatchBall {
+  constructor(mesh, radius){
+    this.mesh = mesh; this.position = mesh.position; this.radius = radius;
+    this.velocity = new THREE.Vector3(); this.carrier = null; this.team = -1;
+  }
+  attach(agent){ this.carrier = agent; this.team = agent.team; this.velocity.set(0,0,0); }
+  release(x, y, z){ this.carrier = null; this.team = -1; this.velocity.set(x,y,z); }
+  update(dt){
+    if(this.carrier){
+      const a = this.carrier; const lead = a.facing;
+      this.position.set(a.obj.position.x + lead.x*0.48, this.radius, a.obj.position.z + lead.z*0.48);
+      this.mesh.rotation.z += dt*10;
+      return;
+    }
+    this.velocity.y += GRAVITY*dt;
+    this.position.addScaledVector(this.velocity, dt);
+    if(this.position.y < this.radius){
+      this.position.y = this.radius;
+      this.velocity.y *= -0.34; this.velocity.x *= 0.91; this.velocity.z *= 0.91;
+      if(Math.abs(this.velocity.y) < 0.45) this.velocity.y = 0;
+    }
+    this.mesh.rotation.z += Math.hypot(this.velocity.x,this.velocity.z)*dt*2;
+  }
+}
+
+class MatchSimulation {
+  constructor(arena){
+    this.arena = arena; this.tick = 0.125; this.accumulator = 0; this.clock = 0;
+    this.fullActive = false; this.playerTeam = -1; this.playerRole = 'spectator';
+  }
+  update(dt){
+    const playerDistance = dolly.position.distanceTo(this.arena.center);
+    this.fullActive = playerDistance < this.arena.radius + 18;
+    if(!this.fullActive) return;
+    this.accumulator = Math.min(this.accumulator + dt, this.tick*3);
+    while(this.accumulator >= this.tick){ this.fixedUpdate(this.tick); this.accumulator -= this.tick; }
+    this.interpolate(dt);
+  }
+  fixedUpdate(dt){} interpolate(dt){}
+}
+
+class SoccerSimulation extends MatchSimulation {
+  constructor(arena){
+    super(arena);
+    this.ball = new MatchBall(arena.ball, 0.31);
+    this.agents = []; this.score = [0,0]; this.time = 0; this.phase = 'KICKOFF';
+    this.phaseTimer = 1.6; this.kickoffTeam = 0; this.lastEvent = '';
+    this.playerHasBall = false; this.playerActionCharge = 0; this.playerActionHeld = false;
+    this.tmp = new THREE.Vector3(); this.tmp2 = new THREE.Vector3();
+    this.setupAgents(); this.resetKickoff(0);
+  }
+  setupAgents(){
+    const roles = ['keeper','defender','midfielder','striker'];
+    const homes = [[-20,0],[-11,-6],[-4,4],[7,-3],[20,0],[11,6],[4,-4],[-7,3]];
+    for(let i=0;i<this.arena.players.length;i++){
+      const p = this.arena.players[i]; const team = p.team; const role = roles[Math.floor(i/2)];
+      const h = homes[i] || [team===0 ? -5 : 5, (i%3-1)*5];
+      p.role = role; p.state = AgentState.RETURN_TO_POSITION; p.home = new THREE.Vector3(h[0],0,h[1]);
+      p.target = new THREE.Vector3(h[0],0,h[1]); p.facing = new THREE.Vector3(team===0 ? 1 : -1,0,0);
+      p.move = new THREE.Vector3(); p.cooldown = 0; p.decision = 0; p.team = team;
+      p.speed = role === 'keeper' ? 3.1 : 4.0 + (i%2)*0.25; this.agents.push(p);
+    }
+  }
+  resetKickoff(team){
+    this.phase = 'KICKOFF'; this.phaseTimer = 1.5; this.kickoffTeam = team;
+    this.ball.carrier = null; this.ball.team = -1; this.ball.velocity.set(0,0,0);
+    this.ball.position.set(0,this.ball.radius,0);
+    for(const a of this.agents){ a.obj.position.copy(a.home); a.state = AgentState.RETURN_TO_POSITION; a.cooldown = .45; }
+  }
+  fixedUpdate(dt){
+    this.time += dt;
+    if(this.phase !== 'LIVE'){
+      this.phaseTimer -= dt;
+      if(this.phaseTimer <= 0){
+        const taker = this.nearestTeamTo(this.kickoffTeam, 0, 0); this.ball.attach(taker);
+        this.phase = 'LIVE'; this.event('Kickoff — play on!');
+      }
+      return;
+    }
+    this.updatePlayerPossession();
+    for(const a of this.agents){ a.cooldown = Math.max(0,a.cooldown-dt); this.decide(a); }
+    this.tryLooseBallClaims(); this.checkGoalsAndBounds();
+  }
+  interpolate(dt){
+    if(!this.fullActive) return;
+    if(this.playerHasBall){
+      this.ball.position.set(this.playerLocalX(), this.ball.radius, this.playerLocalZ());
+      this.ball.mesh.rotation.z += dt*10;
+    } else this.ball.update(dt);
+    for(const a of this.agents) this.moveAgent(a, dt);
+  }
+  event(text){ this.lastEvent = text; addCommentary('soccer', text); }
+  nearestTeamTo(team,x,z){
+    let best=null, bestD=Infinity;
+    for(const a of this.agents) if(a.team===team){ const dx=a.obj.position.x-x,dz=a.obj.position.z-z,d=dx*dx+dz*dz; if(d<bestD){bestD=d;best=a;} }
+    return best;
+  }
+  nearestOpponent(agent){
+    let best=null,bestD=Infinity;
+    for(const a of this.agents) if(a.team!==agent.team){ const dx=a.obj.position.x-agent.obj.position.x,dz=a.obj.position.z-agent.obj.position.z,d=dx*dx+dz*dz; if(d<bestD){bestD=d;best=a;} }
+    return best;
+  }
+  isOpen(candidate, from){
+    let nearest=Infinity;
+    for(const a of this.agents) if(a.team!==candidate.team){ const dx=a.obj.position.x-candidate.obj.position.x,dz=a.obj.position.z-candidate.obj.position.z; nearest=Math.min(nearest,dx*dx+dz*dz); }
+    const dx=candidate.obj.position.x-from.obj.position.x,dz=candidate.obj.position.z-from.obj.position.z;
+    return nearest > 10 && dx*dx+dz*dz > 5;
+  }
+  bestPass(carrier){
+    let best=null,bestScore=-Infinity;
+    for(const a of this.agents){
+      if(a===carrier || a.team!==carrier.team || !this.isOpen(a,carrier)) continue;
+      const progress = (a.obj.position.x-carrier.obj.position.x) * (carrier.team===0 ? 1 : -1);
+      const dx=a.obj.position.x-carrier.obj.position.x,dz=a.obj.position.z-carrier.obj.position.z;
+      const score = progress - (dx*dx+dz*dz)*0.025;
+      if(score>bestScore){bestScore=score;best=a;}
+    }
+    if(this.playerTeam===carrier.team && this.playerIsOpen(carrier)) return { player:true };
+    return best;
+  }
+  decide(a){
+    const b=this.ball, carrier=b.carrier, attack=a.team===0?1:-1;
+    const bx=b.position.x,bz=b.position.z;
+    if(a.role==='keeper'){
+      a.state=AgentState.KEEP_GOAL; a.target.set(a.team===0?-20.8:20.8,0,THREE.MathUtils.clamp(bz*.42,-2.8,2.8));
+      if(carrier && carrier.team!==a.team && Math.abs(bx-(a.team===0?-22:22))<5 && Math.abs(bz)<4){ a.target.set(bx,0,bz); }
+      if(!carrier && Math.abs(bx-(a.team===0?-22:22))<4 && Math.abs(bz)<4 && b.position.y<1.4){ this.ball.attach(a); this.event('Keeper claims it.'); }
+      return;
+    }
+    if(carrier===a){
+      const goalX=a.team===0?22.5:-22.5; const goalDist=Math.abs(goalX-a.obj.position.x); const pressure=this.nearestOpponent(a);
+      const pressured=pressure && pressure.obj.position.distanceToSquared(a.obj.position)<7;
+      if(goalDist<8 && Math.abs(a.obj.position.z)<6){ this.shoot(a); return; }
+      if(pressured && a.cooldown===0){ const target=this.bestPass(a); if(target){ this.pass(a,target); return; } }
+      a.state=AgentState.CARRY; a.target.set(a.obj.position.x+attack*3.5,0,THREE.MathUtils.clamp(a.obj.position.z*.7,-11,11)); return;
+    }
+    if(this.playerHasBall && this.playerTeam===a.team){
+      a.state=AgentState.RETURN_TO_POSITION; this.attackHome(a,attack,bx,bz); return;
+    }
+    if(carrier && carrier.team===a.team){ this.attackHome(a,attack,bx,bz); return; }
+    const closest=this.nearestTeamTo(a.team,bx,bz);
+    if(closest===a){ a.state=AgentState.PRESS; a.target.set(bx,0,bz); }
+    else { const mark=this.nearestOpponent(a); a.state=AgentState.MARK_OPPONENT; if(mark) a.target.set(mark.obj.position.x-attack*1.4,0,mark.obj.position.z); }
+    if(carrier && carrier.team!==a.team && a.obj.position.distanceToSquared(carrier.obj.position)<1.55 && a.cooldown===0){
+      a.state=AgentState.TACKLE; a.cooldown=1.1;
+      if(Math.random()<.38){ this.ball.attach(a); this.event(a.team===0?'Red win the tackle!':'Blue win the tackle!'); }
+    }
+  }
+  attackHome(a,attack,bx,bz){
+    a.state=AgentState.RETURN_TO_POSITION;
+    const push=THREE.MathUtils.clamp(bx*.23,-5,5);
+    a.target.set(THREE.MathUtils.clamp(a.home.x+push, -19,19),0,THREE.MathUtils.clamp(a.home.z+bz*.16,-12,12));
+    if(a.role==='striker') a.target.x += attack*3;
+  }
+  moveAgent(a,dt){
+    const dx=a.target.x-a.obj.position.x,dz=a.target.z-a.obj.position.z;
+    const d=Math.hypot(dx,dz); if(d>.05){ const s=Math.min(d,a.speed*dt); a.facing.set(dx/d,0,dz/d); a.obj.position.x+=a.facing.x*s; a.obj.position.z+=a.facing.z*s; a.obj.rotation.y=Math.atan2(a.facing.x,a.facing.z); }
+    // Separation keeps capsule meshes legible and prevents tactical clumps.
+    for(const other of this.agents) if(other!==a){ const ox=a.obj.position.x-other.obj.position.x,oz=a.obj.position.z-other.obj.position.z,od=ox*ox+oz*oz; if(od>.001 && od<.64){ const inv=.018/Math.sqrt(od); a.obj.position.x+=ox*inv; a.obj.position.z+=oz*inv; } }
+    a.obj.position.y=Math.abs(Math.sin(this.time*7+a.bob))*0.035;
+  }
+  pass(from,target){
+    const tx=target.player ? this.playerLocalX() : target.obj.position.x, tz=target.player ? this.playerLocalZ() : target.obj.position.z;
+    const dx=tx-from.obj.position.x,dz=tz-from.obj.position.z,d=Math.hypot(dx,dz)||1;
+    this.ball.release(dx/d*(7+d*.36),1.4,dz/d*(7+d*.36)); from.cooldown=.8; from.state=AgentState.PASS;
+  }
+  shoot(a){
+    const gx=a.team===0?22.8:-22.8, dx=gx-a.obj.position.x, dz=-a.obj.position.z*.55, d=Math.hypot(dx,dz)||1;
+    this.ball.release(dx/d*14,4.4,dz/d*14); a.cooldown=1.2; a.state=AgentState.SHOOT; this.event('A shot on goal!');
+  }
+  tryLooseBallClaims(){
+    if(this.ball.carrier || this.ball.position.y>1.1) return;
+    let best=null,bestD=1.25;
+    for(const a of this.agents){ const d=a.obj.position.distanceToSquared(this.ball.position); if(d<bestD){bestD=d;best=a;} }
+    if(best) this.ball.attach(best);
+  }
+  checkGoalsAndBounds(){
+    const p=this.ball.position;
+    if(Math.abs(p.x)>22.2 && Math.abs(p.z)<3.66 && p.y<2.5){ const scoring=p.x>0?0:1; this.score[scoring]++; this.event(`${scoring===0?'RED':'BLUE'} GOAL! ${this.score[0]}–${this.score[1]}`); this.resetKickoff(1-scoring); return; }
+    if(Math.abs(p.x)>24 || Math.abs(p.z)>16){ this.event('Ball out — restart.'); this.resetKickoff(this.ball.team>=0?1-this.ball.team:this.kickoffTeam); }
+  }
+  playerLocalX(){ return dolly.position.x-this.arena.center.x; }
+  playerLocalZ(){ return dolly.position.z-this.arena.center.z; }
+  playerIsOpen(from){
+    const x=this.playerLocalX(),z=this.playerLocalZ(), dx=x-from.obj.position.x,dz=z-from.obj.position.z;
+    if(dx*dx+dz*dz>300) return false;
+    for(const a of this.agents) if(a.team!==from.team && (a.obj.position.x-x)**2+(a.obj.position.z-z)**2<9) return false;
+    return true;
+  }
+  updatePlayerPossession(){
+    if(this.playerTeam<0){ this.playerHasBall=false; return; }
+    const px=this.playerLocalX(),pz=this.playerLocalZ();
+    if(this.playerHasBall){ this.ball.carrier=null; this.ball.team=this.playerTeam; this.ball.position.set(px, this.ball.radius, pz); return; }
+    if(!this.ball.carrier && this.ball.position.y<1.1 && (this.ball.position.x-px)**2+(this.ball.position.z-pz)**2<1.8){ this.playerHasBall=true; this.ball.velocity.set(0,0,0); this.event('Player controls the ball.'); }
+  }
+  playerAction(release){
+    if(this.playerTeam<0){ showMessage('Choose Red or Blue to join the match.'); return; }
+    if(!this.playerHasBall){
+      const px=this.playerLocalX(),pz=this.playerLocalZ(); let nearest=this.nearestTeamTo(1-this.playerTeam,px,pz);
+      if(nearest && (nearest.obj.position.x-px)**2 + (nearest.obj.position.z-pz)**2 < 4){ if(Math.random()<.45){ this.ball.carrier=null; this.ball.team=this.playerTeam; this.ball.velocity.set(0,0,0); this.playerHasBall=true; this.event('Clean tackle!'); } else showMessage('Tackle missed'); }
+      else showMessage('Get closer to the ball or press an opponent.'); return;
+    }
+    const px=this.playerLocalX(),pz=this.playerLocalZ(), goalX=this.playerTeam===0?22.8:-22.8;
+    const nearGoal=Math.abs(goalX-px)<10 && Math.abs(pz)<7;
+    // A tap in the shooting area is an immediate finish. Holding elsewhere
+    // remains a deliberate pass, so mouse, touch, and VR all have a reliable shot.
+    if(!release && !nearGoal){ this.playerActionHeld=true; this.playerActionCharge=1; showMessage('Hold then release to pass'); return; }
+    const d=getForwardVector(), power=8+this.playerActionCharge*.09+(selectedCharacter==='striker' && soccerPower>=90?8:0);
+    this.playerHasBall=false; this.ball.release(d.x*(nearGoal?power+5:power), nearGoal?4.2:1.2, d.z*(nearGoal?power+5:power));
+    this.playerActionHeld=false; this.playerActionCharge=0; soccerPower=0; this.event(nearGoal?'Player shoots!':'Player sends a pass.');
+  }
+}
+
+class BasketballSimulation extends MatchSimulation {
+  constructor(arena){
+    super(arena); this.ball = new MatchBall(arena.ball, .24); this.agents=[];
+    this.score=[0,0]; this.possession=0; this.phase='INBOUND'; this.phaseTimer=1.2;
+    this.shotClock=18; this.playerHasBall=false; this.playerTeam=-1; this.time=0;
+    this.setupAgents(); this.resetPossession(0);
+  }
+  setupAgents(){
+    const roles=['point guard','wing','forward','center'];
+    const homes=[[-18,0],[-10,-9],[-8,8],[-15,3],[18,0],[10,9],[8,-8],[15,-3]];
+    for(let i=0;i<this.arena.players.length;i++){
+      const a=this.arena.players[i], h=homes[i]; a.role=roles[Math.floor(i/2)];
+      a.home=new THREE.Vector3(h[0],0,h[1]); a.target=a.home.clone(); a.facing=new THREE.Vector3(a.team===0?1:-1,0,0);
+      a.speed=4.1; a.cooldown=0; a.state=AgentState.RETURN_TO_POSITION; this.agents.push(a);
+    }
+  }
+  resetPossession(team){
+    this.possession=team; this.phase='INBOUND'; this.phaseTimer=1.1; this.shotClock=18; this.playerHasBall=false;
+    this.ball.carrier=null; this.ball.team=-1; this.ball.velocity.set(0,0,0); this.ball.position.set(team===0?-2:2,.24,0);
+    for(const a of this.agents){ a.obj.position.copy(a.home); a.cooldown=.5; }
+  }
+  fixedUpdate(dt){
+    this.time+=dt;
+    if(this.phase!=='LIVE'){
+      this.phaseTimer-=dt;
+      if(this.phaseTimer<=0){ const pg=this.nearest(this.possession,0,0); this.ball.attach(pg); this.phase='LIVE'; addCommentary('basketball','The ball is inbounded.'); }
+      return;
+    }
+    this.shotClock-=dt; this.updatePlayerPossession();
+    for(const a of this.agents){ a.cooldown=Math.max(0,a.cooldown-dt); this.decide(a); }
+    this.claimLooseBall();
+    if(this.shotClock<=0){ addCommentary('basketball','Shot clock violation.'); this.resetPossession(1-this.possession); }
+  }
+  interpolate(dt){
+    if(this.playerHasBall){ this.ball.position.set(this.playerX(),1.05,this.playerZ()); this.ball.mesh.rotation.x+=dt*12; }
+    else this.ball.update(dt);
+    for(const a of this.agents) this.move(a,dt);
+    this.checkShot();
+  }
+  nearest(team,x,z){ let best=null,bd=Infinity; for(const a of this.agents) if(a.team===team){const dx=a.obj.position.x-x,dz=a.obj.position.z-z,d=dx*dx+dz*dz;if(d<bd){bd=d;best=a;}} return best; }
+  opponent(a){ let best=null,bd=Infinity; for(const b of this.agents) if(b.team!==a.team){const dx=b.obj.position.x-a.obj.position.x,dz=b.obj.position.z-a.obj.position.z,d=dx*dx+dz*dz;if(d<bd){bd=d;best=b;}}return best; }
+  decide(a){
+    const carrier=this.ball.carrier, attack=a.team===0?1:-1;
+    if(carrier===a){
+      const hoopX=attack*32.05, dist=Math.abs(hoopX-a.obj.position.x), defender=this.opponent(a);
+      if((dist<8 || this.shotClock<3) && a.cooldown===0){ this.npcShot(a); return; }
+      // Move the ball regularly: a pressured guard passes, and an unpressured
+      // one still swings it after a short decision cooldown.
+      if(a.cooldown===0 && (a.role==='point guard' || (defender && defender.obj.position.distanceToSquared(a.obj.position)<18))){ const mate=this.openMate(a); if(mate){this.pass(a,mate);return;} }
+      a.state=AgentState.DRIBBLE; a.target.set(a.obj.position.x+attack*2.2,0,THREE.MathUtils.clamp(a.obj.position.z*.7,-14,14)); return;
+    }
+    if(this.playerHasBall && a.team===this.playerTeam){ this.offenseSpot(a,attack); return; }
+    if(carrier && carrier.team===a.team){ this.offenseSpot(a,attack); return; }
+    const mark=this.opponent(a); a.state=AgentState.MARK_OPPONENT;
+    if(mark) a.target.set(mark.obj.position.x-attack*1.1,0,mark.obj.position.z*.9);
+    const closest=this.nearest(a.team,this.ball.position.x,this.ball.position.z);
+    if(closest===a){a.state=AgentState.PRESS;a.target.set(this.ball.position.x,0,this.ball.position.z);}
+    if(carrier && carrier.team!==a.team && a.obj.position.distanceToSquared(carrier.obj.position)<1.25 && a.cooldown===0){a.cooldown=1; if(Math.random()<.23){this.ball.attach(a);this.possession=a.team;addCommentary('basketball','Steal!');}}
+  }
+  offenseSpot(a,attack){ const spots=[[attack*17,0],[attack*12,11],[attack*12,-11],[attack*21,5]]; const p=spots[this.agents.filter(x=>x.team===a.team).indexOf(a)%4]; a.state=AgentState.RETURN_TO_POSITION; a.target.set(p[0],0,p[1]); }
+  openMate(from){ let best=null,bd=Infinity; for(const a of this.agents) if(a.team===from.team&&a!==from){const o=this.opponent(a),d=o?o.obj.position.distanceToSquared(a.obj.position):99;if(d>9&&d<bd){bd=d;best=a;}}return best; }
+  pass(from,to){const dx=to.obj.position.x-from.obj.position.x,dz=to.obj.position.z-from.obj.position.z,d=Math.hypot(dx,dz)||1;this.ball.release(dx/d*(8+d*.28),2.8,dz/d*(8+d*.28));from.cooldown=1.05;addCommentary('basketball','Sharp pass finds an open teammate.');}
+  launchShot(x,z,team,bonus=false){const hoop=this.arena.hoops[team===0?1:0],dx=hoop.x-x,dz=hoop.z-z,d=Math.hypot(dx,dz)||1,t=THREE.MathUtils.clamp(.72+d*.032,.9,1.55),speed=d/t,vy=(hoop.y-this.ball.position.y-.5*GRAVITY*t*t)/t+(bonus?.45:0);this.ball.release(dx/d*speed,vy,dz/d*speed);this.ball.shotTeam=team;this.ball.shotValue=Math.abs(x)>10.5?3:2;}
+  npcShot(a){this.launchShot(a.obj.position.x,a.obj.position.z,a.team);a.cooldown=1.35;}
+  move(a,dt){const dx=a.target.x-a.obj.position.x,dz=a.target.z-a.obj.position.z,d=Math.hypot(dx,dz);if(d>.05){const s=Math.min(d,a.speed*dt);a.facing.set(dx/d,0,dz/d);a.obj.position.x+=a.facing.x*s;a.obj.position.z+=a.facing.z*s;a.obj.rotation.y=Math.atan2(a.facing.x,a.facing.z);}a.obj.position.y=Math.abs(Math.sin(this.time*7+a.bob))*.035;}
+  claimLooseBall(){if(this.ball.carrier||this.playerHasBall||this.ball.position.y>1.3)return;let best=null,bd=1.5;for(const a of this.agents){const d=a.obj.position.distanceToSquared(this.ball.position);if(d<bd){bd=d;best=a;}}if(best){this.ball.attach(best);this.possession=best.team;}}
+  checkShot(){const p=this.ball.position;if(this.ball.shotTeam===undefined)return;for(const h of this.arena.hoops){if(Math.abs(p.x-h.x)<.72&&Math.abs(p.z-h.z)<.72&&p.y<h.y+.45&&p.y>h.y-.65&&this.ball.velocity.y<0){const contest=this.nearest(1-this.ball.shotTeam,p.x,p.z);const made=Math.random()<(contest&&contest.obj.position.distanceToSquared(p)<5?.42:.64);if(made){const v=this.ball.shotValue||2;this.score[this.ball.shotTeam]+=v;addCommentary('basketball',`Bucket! ${this.score[0]}–${this.score[1]}.`);this.resetPossession(1-this.ball.shotTeam);}else{this.ball.shotTeam=undefined;}return;}}if(p.y<=.25&&this.ball.velocity.lengthSq()<3){this.ball.shotTeam=undefined;}}
+  playerX(){return dolly.position.x-this.arena.center.x;} playerZ(){return dolly.position.z-this.arena.center.z;}
+  updatePlayerPossession(){if(this.playerTeam<0)return;const x=this.playerX(),z=this.playerZ();if(this.playerHasBall){this.ball.carrier=null;this.ball.team=this.playerTeam;this.ball.position.set(x,1.05,z);return;}if(!this.ball.carrier&&this.ball.position.y<1.4&&(this.ball.position.x-x)**2+(this.ball.position.z-z)**2<2){this.playerHasBall=true;this.possession=this.playerTeam;addCommentary('basketball','Player takes possession.');}}
+  playerAction(){if(this.playerTeam<0){showMessage('Choose a basketball team to join.');return;}if(!this.playerHasBall){showMessage('Get to the loose ball or defend the handler.');return;}const bonus=selectedCharacter==='shooter'&&abilityState.basketball,x=this.playerX(),z=this.playerZ();this.playerHasBall=false;this.launchShot(x,z,this.playerTeam,bonus);abilityState.basketball=false;showMessage(bonus?'CLUTCH RANGE!':'Shot up!');}
+  playerPassOrSteal(){if(this.playerTeam<0){showMessage('Choose a basketball team to join.');return;}if(!this.playerHasBall){const c=this.ball.carrier,px=this.playerX(),pz=this.playerZ();if(c&&c.team!==this.playerTeam&&(c.obj.position.x-px)**2+(c.obj.position.z-pz)**2<2.2&&Math.random()<.5){this.ball.carrier=null;this.ball.velocity.set(0,0,0);this.playerHasBall=true;this.possession=this.playerTeam;addCommentary('basketball','Player steals it!');}else showMessage('Close in to attempt a steal.');return;}const from={team:this.playerTeam,obj:{position:{x:this.playerX(),z:this.playerZ()}}};const mate=this.openMate(from);if(!mate){showMessage('No open teammate.');return;}const dx=mate.obj.position.x-this.playerX(),dz=mate.obj.position.z-this.playerZ(),d=Math.hypot(dx,dz)||1;this.playerHasBall=false;this.ball.release(dx/d*(8+d*.28),2.8,dz/d*(8+d*.28));showMessage('Pass sent.');}
+}
+
+class FootballSimulation extends MatchSimulation {
+  constructor(arena){
+    super(arena); this.ball=new MatchBall(arena.ball,.2); this.agents=[]; this.score=[0,0];
+    this.offense=0; this.line=-12; this.firstDown=0; this.down=1; this.toGo=10;
+    this.phase='SET'; this.phaseTimer=1.4; this.time=0; this.playerHasBall=false; this.playTimer=0; this.passTarget=null;
+    this.setupAgents(); this.resetPlay();
+  }
+  setupAgents(){
+    const roles=['qb','qb','receiver','receiver','receiver','receiver','runner','runner'];
+    for(let i=0;i<this.arena.players.length;i++){const a=this.arena.players[i];a.role=roles[i];a.target=new THREE.Vector3();a.facing=new THREE.Vector3(a.team===0?1:-1,0,0);a.speed=a.team===0?4.4:4.7;a.cooldown=0;a.state=AgentState.RETURN_TO_POSITION;this.agents.push(a);}
+  }
+  resetPlay(){
+    this.phase='SET';this.phaseTimer=1.35;this.playTimer=0;this.passTarget=null;this.playerHasBall=false;this.ball.carrier=null;this.ball.team=-1;this.ball.velocity.set(0,0,0);
+    const o=this.offense===0?1:-1, l=this.line;
+    const offense=this.agents.filter(a=>a.team===this.offense), defense=this.agents.filter(a=>a.team!==this.offense);
+    const oz=[0,-5,5,9]; const dz=[0,-5,5,9];
+    offense.forEach((a,i)=>{a.obj.position.set(l-o*(i===0?1.2:2.4),0,oz[i]);a.target.copy(a.obj.position);});
+    defense.forEach((a,i)=>{a.obj.position.set(l+o*3,0,dz[i]*.9);a.target.copy(a.obj.position);});
+    this.ball.position.set(l-o*.7,1.05,0);
+  }
+  fixedUpdate(dt){
+    this.time+=dt;
+    if(this.phase!=='LIVE'){this.phaseTimer-=dt;if(this.phaseTimer<=0){const qb=this.agents.find(a=>a.team===this.offense&&a.role==='qb');this.ball.attach(qb);this.phase='LIVE';addCommentary('football',`Snap — ${this.offense===0?'Blue':'Red'} offense.`);}return;}
+    this.playTimer+=dt;this.updatePlayerPossession();
+    for(const a of this.agents){a.cooldown=Math.max(0,a.cooldown-dt);this.decide(a);}
+    this.checkCatch(); this.checkTackle();
+    if(this.playTimer>9){addCommentary('football','Pass falls incomplete.');this.endPlay(this.line);}
+  }
+  interpolate(dt){
+    if(this.playerHasBall){this.ball.position.set(this.playerX(),1.05,this.playerZ());this.ball.mesh.rotation.y+=dt*12;}
+    else this.ball.update(dt);
+    for(const a of this.agents)this.move(a,dt);
+  }
+  decide(a){
+    const carrier=this.ball.carrier, dir=this.offense===0?1:-1;
+    if(a.team===this.offense){
+      if(carrier===a){
+        if(a.role==='qb'&&this.playTimer>.85&&a.cooldown===0){const r=this.bestReceiver();if(r){this.throwTo(a,r);return;}}
+        a.state=AgentState.CARRY;a.target.set(a.obj.position.x+dir*3,0,a.obj.position.z);return;
+      }
+      if(this.playerHasBall&&this.playerTeam===a.team){this.route(a,dir);return;}
+      this.route(a,dir);return;
+    }
+    const mark=this.closestOffense(a);a.state=AgentState.MARK_OPPONENT;if(mark)a.target.set(mark.obj.position.x-dir*1.2,0,mark.obj.position.z);
+    if(carrier&&carrier.team===this.offense&&a.obj.position.distanceToSquared(carrier.obj.position)<1.7&&a.cooldown===0){a.cooldown=1;this.endPlay(carrier.obj.position.x);addCommentary('football','Tackle made.');}
+  }
+  route(a,dir){const lane=a.role==='receiver'?(a.obj.position.z>=0?7:-7):a.role==='runner'?0:a.obj.position.z;a.state=AgentState.RETURN_TO_POSITION;a.target.set(THREE.MathUtils.clamp(this.line+dir*(a.role==='qb'?-2:Math.min(15,3+this.playTimer*3.2)),-22,22),0,lane);}
+  closestOffense(a){let b=null,d=Infinity;for(const x of this.agents)if(x.team===this.offense){const q=a.obj.position.distanceToSquared(x.obj.position);if(q<d){d=q;b=x;}}return b;}
+  bestReceiver(){let b=null,s=-Infinity,dir=this.offense===0?1:-1;for(const a of this.agents)if(a.team===this.offense&&a.role==='receiver'){const open=this.agents.filter(x=>x.team!==this.offense).every(x=>x.obj.position.distanceToSquared(a.obj.position)>9);const score=(a.obj.position.x-this.line)*dir+(open?10:0);if(score>s){s=score;b=a;}}if(this.playerTeam===this.offense){const px=this.playerX(),pz=this.playerZ(),open=this.agents.filter(x=>x.team!==this.offense).every(x=>(x.obj.position.x-px)**2+(x.obj.position.z-pz)**2>9);if(open&&(px-this.line)*dir>2)return 'player';}return b;}
+  throwTo(from,to){const tx=to==='player'?this.playerX():to.obj.position.x,tz=to==='player'?this.playerZ():to.obj.position.z,dx=tx-from.obj.position.x,dz=tz-from.obj.position.z,d=Math.hypot(dx,dz)||1;this.ball.release(dx/d*(13+d*.12),5.2,dz/d*(13+d*.12));this.passTarget=to;from.cooldown=1.5;addCommentary('football','Quarterback lets it fly.');}
+  checkCatch(){if(!this.passTarget||this.ball.position.y>2.4)return;if(this.passTarget==='player'){if((this.ball.position.x-this.playerX())**2+(this.ball.position.z-this.playerZ())**2<2.5){this.playerHasBall=true;this.ball.carrier=null;this.passTarget=null;addCommentary('football','Player makes the catch!');}else if(this.ball.position.y<=.21){this.passTarget=null;addCommentary('football','Incomplete pass.');this.endPlay(this.line);}return;}const a=this.passTarget;if(a.obj.position.distanceToSquared(this.ball.position)<2.5){this.ball.attach(a);this.passTarget=null;addCommentary('football','Reception!');}else if(this.ball.position.y<=.21){this.passTarget=null;addCommentary('football','Incomplete pass.');this.endPlay(this.line);}}
+  checkTackle(){if(this.playerHasBall){for(const a of this.agents)if(a.team!==this.playerTeam&&(a.obj.position.x-this.playerX())**2+(a.obj.position.z-this.playerZ())**2<1.7){this.endPlay(this.playerX());addCommentary('football','Player tackled.');return;}}}
+  endPlay(spot){const dir=this.offense===0?1:-1;if((spot-this.line)*dir>=this.toGo){this.down=1;this.line=spot;this.firstDown=THREE.MathUtils.clamp(spot+dir*10,-20,20);this.toGo=Math.abs(this.firstDown-this.line);addCommentary('football','First down!');}else{this.down++;this.toGo=Math.max(1,Math.abs(this.firstDown-spot));this.line=spot;}
+    if(Math.abs(spot)>=22){this.score[this.offense]+=6;addCommentary('football',`TOUCHDOWN! ${this.score[0]}–${this.score[1]}.`);this.offense=1-this.offense;this.line=this.offense===0?-12:12;this.firstDown=this.line+(this.offense===0?10:-10);this.down=1;this.toGo=10;}
+    else if(this.down>4){addCommentary('football','Turnover on downs.');this.offense=1-this.offense;this.line=-spot;this.firstDown=this.line+(this.offense===0?10:-10);this.down=1;this.toGo=10;}this.resetPlay();}
+  move(a,dt){const dx=a.target.x-a.obj.position.x,dz=a.target.z-a.obj.position.z,d=Math.hypot(dx,dz);if(d>.05){const s=Math.min(d,a.speed*dt);a.facing.set(dx/d,0,dz/d);a.obj.position.x+=a.facing.x*s;a.obj.position.z+=a.facing.z*s;a.obj.rotation.y=Math.atan2(a.facing.x,a.facing.z);}a.obj.position.y=Math.abs(Math.sin(this.time*7+a.bob))*.035;}
+  playerX(){return dolly.position.x-this.arena.center.x;}playerZ(){return dolly.position.z-this.arena.center.z;}
+  updatePlayerPossession(){if(this.playerTeam<0)return;const x=this.playerX(),z=this.playerZ();if(this.playerHasBall){this.ball.carrier=null;this.ball.team=this.playerTeam;this.ball.position.set(x,1.05,z);return;}if(!this.ball.carrier&&this.ball.position.y<1.6&&(this.ball.position.x-x)**2+(this.ball.position.z-z)**2<2){this.playerHasBall=true;this.offense=this.playerTeam;addCommentary('football','Player has the football.');}}
+  playerAction(){if(this.playerTeam<0){showMessage('Choose a football team to join.');return;}if(!this.playerHasBall){const c=this.ball.carrier,px=this.playerX(),pz=this.playerZ();if(c&&c.team!==this.playerTeam&&(c.obj.position.x-px)**2+(c.obj.position.z-pz)**2<2.2){this.ball.carrier=null;this.playerHasBall=true;this.offense=this.playerTeam;addCommentary('football','Player strips the ball!');}else showMessage('Get open for a catch or close in for the tackle.');return;}const d=getForwardVector(),bonus=selectedCharacter==='quarterback'&&abilityState.football;this.playerHasBall=false;this.ball.release(d.x*(bonus?30:22),bonus?8:6,d.z*(bonus?30:22));this.passTarget=this.bestReceiver();abilityState.football=false;showMessage(bonus?'LASER PASS!':'Pass thrown!');}
+}
+
+let soccerMatch = null;
+let basketballMatch = null;
+let footballMatch = null;
+
 function spawnArenaPlayers(arenaData, zoneKey, jerseyColorsA, jerseyColorsB, waypointFn, count=6){
   const players = [];
   for(let i=0;i<count;i++){
@@ -419,6 +815,7 @@ function updateArenaPlayers(arenaData, dt){
   if(!arenaData.players) return;
   if(arenaData.zoneKey === 'soccer') return updateSoccerTeams(arenaData, dt);
   if(arenaData.zoneKey === 'basketball') return updateBasketballTeams(arenaData, dt);
+  if(arenaData.zoneKey === 'football' && footballMatch) return;
   for(const pl of arenaData.players){
     const dir = pl.target.clone().sub(pl.obj.position);
     dir.y = 0;
@@ -459,6 +856,7 @@ function moveArenaPlayer(pl, target, dt){
 }
 
 function updateSoccerTeams(a, dt){
+  if(soccerMatch) return;
   const ball = a.ball.position;
   // The side nearest the ball presses; the other side drops between the ball and its own goal.
   if(a.possessionTeam === undefined || a.vel.lengthSq() > 0.4){
@@ -487,6 +885,7 @@ function updateSoccerTeams(a, dt){
 }
 
 function updateBasketballTeams(a, dt){
+  if(basketballMatch) return;
   if(a.possessionTeam === undefined) a.possessionTeam = 0;
   if(a.lastScore !== a.score){ a.possessionTeam = 1-a.possessionTeam; a.lastScore = a.score; }
   const offense = a.players.filter(pl=>pl.team === a.possessionTeam);
@@ -1044,6 +1443,7 @@ function buildSoccerArena(center){
     radius: 30
   };
   spawnArenaPlayers(data, 'soccer', 0xdb4437, 0x4285f4, ()=> new THREE.Vector3((Math.random()-0.5)*38, 0, (Math.random()-0.5)*24), 8);
+  soccerMatch = new SoccerSimulation(data);
   return data;
 }
 
@@ -1159,9 +1559,11 @@ function buildBasketballArena(center){
     ball.position.set(0,0.25,0);
     group.add(ball);
     data.ball = ball;
+    if(basketballMatch){ basketballMatch.ball.mesh = ball; basketballMatch.ball.position = ball.position; }
   });
   
   spawnArenaPlayers(data, 'basketball', 0xf4b400, 0x0f9d58, ()=> new THREE.Vector3((Math.random()-0.5)*50, 0, (Math.random()-0.5)*30), 8);
+  basketballMatch = new BasketballSimulation(data);
   return data;
 }
 
@@ -1274,6 +1676,7 @@ function buildFootballArena(center){
     radius: 30
   };
   spawnArenaPlayers(data, 'football', 0x4285f4, 0xdb4437, ()=> new THREE.Vector3((Math.random()-0.5)*40, 0, (Math.random()-0.5)*20), 8);
+  footballMatch = new FootballSimulation(data);
   return data;
 }
 
@@ -1302,6 +1705,7 @@ function setupDesktopInput(){
 
   startBtn.addEventListener('click', ()=>{
     blocker.classList.add('hidden');
+    startOpeningMusic();
     if(!isMobile()) renderer.domElement.requestPointerLock?.();
     clock.start();
   });
@@ -1327,6 +1731,17 @@ function setupDesktopInput(){
   window.addEventListener('keydown', (e)=>{
     keys[e.code] = true;
     if(e.code === 'KeyQ' && !e.repeat){ activateAbility(); return; }
+    // Distinct sport bindings keep actions predictable while the shared ACT
+    // button remains the mobile/VR fallback.
+    if(currentZone === 'soccer' && soccerMatch && e.code === 'Space'){
+      if(!soccerMatch.playerActionHeld) doInteract();
+      return;
+    }
+    if(currentZone === 'soccer' && soccerMatch && e.code === 'KeyF'){ soccerMatch.playerAction(false); return; }
+    if(currentZone === 'basketball' && basketballMatch && e.code === 'KeyX'){ basketballMatch.playerAction(); return; }
+    if(currentZone === 'basketball' && basketballMatch && e.code === 'KeyC'){ basketballMatch.playerPassOrSteal(); return; }
+    if(currentZone === 'baseball' && e.code === 'KeyZ'){ swingBat(); return; }
+    if(currentZone === 'football' && footballMatch && e.code === 'KeyV'){ footballMatch.playerAction(); return; }
     
     // Sport-specific controls
     if(currentZone === 'soccer'){
@@ -1341,15 +1756,13 @@ function setupDesktopInput(){
         // First press: start charging
         doInteract();
       }
-    } else if(e.code === 'Space' || e.code === 'KeyE'){ 
-      // Non-soccer sports interact immediately
-      doInteract();
     }
   });
   window.addEventListener('keyup', (e)=>{
     keys[e.code] = false;
-    if((e.code === 'Space' || e.code === 'KeyE') && currentZone === 'soccer' && soccerPower > 0){
-      doInteract(); // Release soccer shot
+    if(e.code === 'Space' && currentZone === 'soccer' && (soccerPower > 0 || (soccerMatch && soccerMatch.playerActionHeld))){
+      if(soccerMatch) soccerMatch.playerAction(true);
+      else doInteract(); // Release soccer shot
     }
   });
 }
@@ -1423,6 +1836,10 @@ function setupMobileInput(){
   document.getElementById('actionBtn').addEventListener('touchstart', (e)=>{
     doInteract(); e.preventDefault();
   }, {passive:false});
+  document.getElementById('actionBtn').addEventListener('touchend', (e)=>{
+    if(currentZone === 'soccer' && soccerMatch && soccerMatch.playerActionHeld) soccerMatch.playerAction(true);
+    e.preventDefault();
+  }, {passive:false});
   document.getElementById('abilityBtn').addEventListener('touchstart', (e)=>{
     activateAbility(); e.preventDefault();
   }, {passive:false});
@@ -1464,6 +1881,19 @@ function setupUI(){
     btn.onclick = ()=> selectCharacter(btn.dataset.character);
   });
   document.getElementById('abilityBtn').onclick = activateAbility;
+  document.querySelectorAll('[data-join-team]').forEach(btn=>{
+    btn.onclick = ()=>{
+      const match = currentZone === 'basketball' ? basketballMatch : currentZone === 'football' ? footballMatch : soccerMatch;
+      if(!match) return;
+      const value = btn.dataset.joinTeam;
+      match.playerTeam = value === '' ? -1 : Number(value);
+      match.playerRole = value === '' ? 'spectator' : 'midfielder';
+      match.playerHasBall = false;
+      document.getElementById('joinTeamPanel').classList.add('hidden');
+      const labels = currentZone === 'basketball' ? ['Gold','Green'] : currentZone === 'football' ? ['Blue','Red'] : ['Red','Blue'];
+      showMessage(value === '' ? 'Spectating match' : `Joined ${labels[Number(value)]} as playmaker`);
+    };
+  });
 }
 
 function selectCharacter(id){
@@ -1545,6 +1975,10 @@ function teleportTo(name){
     const names = commentators[name];
     addCommentary(name, `Welcome back to the action, I'm here with ${names[(commentarySpeakerFlip[name]+1)%2]}.`);
   }
+  if(name === 'soccer' && soccerMatch && soccerMatch.playerTeam < 0) document.getElementById('joinTeamPanel').classList.remove('hidden');
+  else if(name === 'basketball' && basketballMatch && basketballMatch.playerTeam < 0) document.getElementById('joinTeamPanel').classList.remove('hidden');
+  else if(name === 'football' && footballMatch && footballMatch.playerTeam < 0) document.getElementById('joinTeamPanel').classList.remove('hidden');
+  else document.getElementById('joinTeamPanel').classList.add('hidden');
 }
 
 function arenaDisplayName(k){
@@ -1575,9 +2009,12 @@ function currentArenaKey(){
 
 function doInteract(){
   const zone = currentZone;
-  if(zone === 'soccer') kickSoccer();
+  if(zone === 'soccer' && soccerMatch) soccerMatch.playerAction(false);
+  else if(zone === 'soccer') kickSoccer();
+  else if(zone === 'basketball' && basketballMatch) basketballMatch.playerAction();
   else if(zone === 'basketball') shootBasketball();
   else if(zone === 'baseball') swingBat();
+  else if(zone === 'football' && footballMatch) footballMatch.playerAction();
   else if(zone === 'football') throwFootball();
 }
 
@@ -1808,6 +2245,7 @@ function updateBallPhysics(a, dt){
 }
 
 function updateSoccer(a, dt){
+  if(soccerMatch) return;
   dribbleTime += dt;
   updateBallPhysics(a, dt);
   // friction when rolling
@@ -1830,6 +2268,7 @@ function updateSoccer(a, dt){
 }
 
 function updateBasketball(a, dt){
+  if(basketballMatch) return;
   dribbleTime += dt;
   if(a.held){
     // The ball is held at the player's side until a shot; it is no longer a bouncing starter avatar.
@@ -1907,6 +2346,7 @@ function updateBaseball(a, dt){
 }
 
 function updateFootball(a, dt){
+  if(footballMatch) return;
   dribbleTime += dt;
   // receiver runs a simple out-route
   a.receiver.position.x += a.receiverDir * dt * 3;
@@ -2071,10 +2511,45 @@ function updateHUD(){
     zoneEl.textContent = arenaDisplayName(key);
     scoreEl.textContent = 'Score: ' + a.score;
     const abilityHint = ` | Q: ${characters[selectedCharacter].ability}`;
-    if(key==='soccer') subEl.textContent = `HOLD SPACE to charge (1=Normal 2=Through 3=Chip) | Power: ${Math.floor(soccerPower)}%${abilityHint}`;
+    if(key==='soccer'){
+      const m = soccerMatch;
+      subEl.textContent = m && m.playerTeam >= 0 ? `Team ${m.playerTeam===0?'Red':'Blue'} · SPACE shoot/pass · F tackle${abilityHint}` : `Watch the match or choose a team to join.${abilityHint}`;
+      if(m){
+        document.getElementById('matchBoard').classList.remove('hidden');
+        document.getElementById('matchScore').textContent = `RED ${m.score[0]}  —  ${m.score[1]} BLUE`;
+        const mins = Math.floor(m.time/60), secs = String(Math.floor(m.time%60)).padStart(2,'0');
+        document.getElementById('matchMeta').textContent = `${mins}:${secs} · ${m.phase === 'LIVE' ? (m.ball.team===0?'Red possession':m.ball.team===1?'Blue possession':'Loose ball') : m.phase.replace('_',' ')}`;
+        if(m.playerTeam<0) document.getElementById('joinTeamPanel').classList.remove('hidden');
+        document.querySelector('#joinTeamPanel p').textContent = 'Join the Solaris match';
+      }
+    }
     if(key==='basketball') subEl.textContent = (a.held ? 'SPACE to start shot meter (hit GREEN window for bonus!)' : 'Move to the ball and press SPACE to pick it up.') + abilityHint;
-    if(key==='baseball') subEl.textContent = `Strikes: ${a.strikes}/3 | Swing on PERFECT timing (early/perfect/late)!${abilityHint}`;
+    if(key==='basketball' && basketballMatch){
+      const m=basketballMatch;
+      scoreEl.textContent = `Gold ${m.score[0]} — ${m.score[1]} Green`;
+      subEl.textContent = m.playerTeam>=0 ? `Team ${m.playerTeam===0?'Gold':'Green'} · X shoot · C pass/steal · Clock ${Math.ceil(m.shotClock)}${abilityHint}` : `Watch the match or choose a team to join.${abilityHint}`;
+      document.getElementById('matchBoard').classList.remove('hidden');
+      document.getElementById('matchScore').textContent = `GOLD ${m.score[0]}  —  ${m.score[1]} GREEN`;
+      document.getElementById('matchMeta').textContent = `${Math.floor(m.time/60)}:${String(Math.floor(m.time%60)).padStart(2,'0')} · ${m.phase === 'LIVE' ? (m.possession===0?'Gold possession':'Green possession') : 'INBOUND'} · ${Math.ceil(m.shotClock)}s`;
+      if(m.playerTeam<0) document.getElementById('joinTeamPanel').classList.remove('hidden');
+      document.querySelector('#joinTeamPanel p').textContent = 'Join the Verde Arena match';
+    }
+    if(key==='baseball') subEl.textContent = `Z: swing · Strikes: ${a.strikes}/3 | Swing on PERFECT timing (early/perfect/late)!${abilityHint}`;
     if(key==='football') subEl.textContent = (a.thrown ? 'Ball in the air...' : 'SPACE to throw (accuracy based on pocket position)') + abilityHint;
+    if(key==='football' && footballMatch){
+      const m=footballMatch;
+      scoreEl.textContent = `Blue ${m.score[0]} — ${m.score[1]} Red`;
+      subEl.textContent = m.playerTeam>=0 ? `Team ${m.playerTeam===0?'Blue':'Red'} · V pass/strip · ${m.down}${m.down===1?'st':m.down===2?'nd':m.down===3?'rd':'th'} & ${Math.ceil(m.toGo)}${abilityHint}` : `Watch the game or choose a team to join.${abilityHint}`;
+      document.getElementById('matchBoard').classList.remove('hidden');
+      document.getElementById('matchScore').textContent = `BLUE ${m.score[0]}  —  ${m.score[1]} RED`;
+      document.getElementById('matchMeta').textContent = `${Math.floor(m.time/60)}:${String(Math.floor(m.time%60)).padStart(2,'0')} · ${m.phase} · ${m.down}${m.down===1?'st':m.down===2?'nd':m.down===3?'rd':'th'} & ${Math.ceil(m.toGo)}`;
+      if(m.playerTeam<0) document.getElementById('joinTeamPanel').classList.remove('hidden');
+      document.querySelector('#joinTeamPanel p').textContent = 'Join the Canopy Stadium match';
+    }
+  }
+  if(key !== 'soccer' && key !== 'basketball' && key !== 'football'){
+    document.getElementById('matchBoard').classList.add('hidden');
+    document.getElementById('joinTeamPanel').classList.add('hidden');
   }
 }
 
@@ -2087,6 +2562,11 @@ function animate(){
   updatePlayerMovement(dt);
   updateNPCs(dt, t);
   updateCityGems(t);
+
+  if(soccerMatch) soccerMatch.update(dt);
+  if(basketballMatch) basketballMatch.update(dt);
+  if(footballMatch) footballMatch.update(dt);
+  if(soccerMatch && soccerMatch.playerActionHeld) soccerMatch.playerActionCharge = Math.min(100, soccerMatch.playerActionCharge + dt*62);
 
   updateSoccer(arenas.soccer, dt);
   updateBasketball(arenas.basketball, dt);
